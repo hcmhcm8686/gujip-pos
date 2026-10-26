@@ -23,13 +23,22 @@
 
 ## 폰에 설치하기
 
-가장 쉬운 방법은 GitHub Pages(무료)에 올려서 주소로 여는 것입니다.
+앱 주소: **https://hcmhcm8686.github.io/gujip-pos/** (GitHub Pages, 무료)
 
-1. PC에서 한 번만: `gh auth login` 으로 GitHub에 로그인합니다. (계정이 없으면 github.com 에서 무료 가입)
-2. 이 폴더를 GitHub 저장소로 올리고 Pages를 켭니다. (Claude에게 "배포해줘"라고 하면 됩니다)
-3. 폰 Chrome에서 주소(`https://아이디.github.io/저장소이름/`)를 엽니다.
-4. Chrome 메뉴(⋮) → **홈 화면에 추가** → 추가. 홈 화면 아이콘으로 열면 전체 화면 앱으로 뜹니다.
-5. 폰 설정 → 디스플레이 → **화면 자동 꺼짐** 시간을 길게 잡아 두면 편합니다. (앱이 켜져 있는 동안은 앱이 화면을 켜 두려고 시도합니다)
+1. 폰 Chrome에서 위 주소를 엽니다. (처음 한 번은 인터넷이 필요하고, 그 뒤로는 없어도 됩니다)
+2. Chrome 메뉴(⋮) → **홈 화면에 추가** → 추가. 홈 화면 아이콘으로 열면 전체 화면 앱으로 뜹니다.
+3. 폰 설정 → 디스플레이 → **화면 자동 꺼짐** 시간을 길게 잡아 두면 편합니다. (앱이 켜져 있는 동안은 앱이 화면을 켜 두려고 시도합니다)
+
+코드를 고친 뒤 다시 올리는 방법 (PC, 이 폴더에서):
+
+```bash
+git add -A
+git commit -m "변경 내용"
+git push
+```
+
+GitHub 계정(hcmhcm8686)으로 `gh auth login` 이 되어 있어야 합니다. 저장소를 처음 만들 때는
+`gh repo create gujip-pos --public --source=. --remote=origin --push` 를 실행하고, 저장소의 Settings → Pages 에서 main 브랜치를 선택합니다.
 
 PC에서 미리 보려면 이 폴더에서 아래를 실행하고 브라우저에서 `http://localhost:8765` 를 엽니다.
 
