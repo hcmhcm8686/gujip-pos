@@ -1,0 +1,16 @@
+{
+  "name": "그집추어탕 주문",
+  "short_name": "추어탕 주문",
+  "description": "그집추어탕 테이블 주문·결제·매출 앱",
+  "start_url": "./index.html",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#f3efe8",
+  "theme_color": "#d35400",
+  "lang": "ko",
+  "icons": [
+    { "src": "icons/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any maskable" },
+    { "src": "icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any maskable" }
+  ]
+}
