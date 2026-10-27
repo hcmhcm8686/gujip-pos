@@ -5,7 +5,7 @@
  */
 'use strict';
 
-const APP_VERSION = '1.3.3';
+const APP_VERSION = '1.3.4';
 const UNDO_MS = 8000;                     // 결제 직후 되돌릴 수 있는 시간
 const LS_PIN = 'gujip.pin';
 const SAVER_CHOICES = [0, 1, 3, 5, 10];   // 화면 보호 대기 시간(분). 0 = 끔
@@ -446,7 +446,11 @@ function periodRange(mode, anchor) {
 }
 function periodLabel(mode, s, e) {
   if (mode === 'day') return `${s.getFullYear()}년 ${s.getMonth() + 1}월 ${s.getDate()}일 (${DAYS[s.getDay()]})`;
-  if (mode === 'week') { const l = addDays(e, -1); return `${s.getFullYear()}년 ${s.getMonth() + 1}월 ${s.getDate()}일 ~ ${l.getMonth() + 1}월 ${l.getDate()}일`; }
+  if (mode === 'week') {
+    // 첫 줄 연도, 둘째 줄 날짜 범위 (한 줄에 넣으면 폰 화면에서 어색하게 줄바꿈됨)
+    const l = addDays(e, -1);
+    return `<span class="period-year">${s.getFullYear()}년</span><span>${s.getMonth() + 1}월 ${s.getDate()}일 ~ ${l.getMonth() + 1}월 ${l.getDate()}일</span>`;
+  }
   if (mode === 'month') return `${s.getFullYear()}년 ${s.getMonth() + 1}월`;
   return `${s.getFullYear()}년`;
 }
