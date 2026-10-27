@@ -5,7 +5,7 @@
  */
 'use strict';
 
-const APP_VERSION = '1.3.1';
+const APP_VERSION = '1.3.2';
 const UNDO_MS = 8000;                     // 결제 직후 되돌릴 수 있는 시간
 const LS_PIN = 'gujip.pin';
 const SAVER_CHOICES = [0, 1, 3, 5, 10];   // 화면 보호 대기 시간(분). 0 = 끔
@@ -500,8 +500,12 @@ async function viewSales() {
     </div>
     <section class="card">
       <div class="summary-total"><span class="label">총 매출</span><strong>${won(total)}</strong></div>
-      <div class="summary-row"><span>주문 ${recs.length}건</span><span>현금 ${won(sum(cash, r => r.total))} (${cash.length}건)</span><span>카드 ${won(sum(card, r => r.total))} (${card.length}건)</span></div>
-      ${discount ? `<div class="summary-row muted"><span>현금 할인 합계 ${won(discount)}</span></div>` : ''}
+      <div class="summary-lines">
+        <div class="summary-line"><span>주문</span><strong>${recs.length}건</strong></div>
+        <div class="summary-line"><span>현금</span><strong>${won(sum(cash, r => r.total))} <small>(${cash.length}건)</small></strong></div>
+        <div class="summary-line"><span>카드</span><strong>${won(sum(card, r => r.total))} <small>(${card.length}건)</small></strong></div>
+        ${discount ? `<div class="summary-line muted"><span>현금 할인 합계</span><strong>${won(discount)}</strong></div>` : ''}
+      </div>
     </section>
     ${bks.length ? `<section class="card"><h2>${bucketTitle}</h2>${bks.map(b => `<div class="bar-row ${b.total ? '' : 'zero'}"><span class="bar-label">${b.label}</span><span class="bar"><span class="bar-fill" style="width:${Math.round(b.total / maxB * 100)}%"></span></span><span class="bar-amt">${b.total ? won(b.total) : '-'}</span></div>`).join('')}</section>` : ''}
     <section class="card"><h2>메뉴별 판매</h2>
