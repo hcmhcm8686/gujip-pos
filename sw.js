@@ -5,7 +5,7 @@
  * - 새 버전 적용: 배포할 때마다 아래 CACHE 번호를 올립니다. 그러면 앱을 열 때 새 워커가 설치되고,
  *   열려 있는 화면에 알려서(app.js가 한가할 때 스스로 새로고침) 새 버전이 바로 적용됩니다.
  *   예전 앱(알림을 못 받는 버전)은 2.5초 뒤 워커가 직접 새로고침합니다. */
-const CACHE = 'gujip-pos-v9';
+const CACHE = 'gujip-pos-v10';
 const SDK_CACHE = 'gujip-firebase-sdk';
 const ASSETS = ['./', './index.html', './style.css', './firebase-config.js', './cloud.js', './app.js', './manifest.json', './icons/icon-192.png', './icons/icon-512.png'];
 const ackWaiters = new Map();   // 새 버전 알림에 답한 화면 (clientId → resolve)

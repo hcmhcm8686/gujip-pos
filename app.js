@@ -5,7 +5,7 @@
  */
 'use strict';
 
-const APP_VERSION = '1.3.2';
+const APP_VERSION = '1.3.3';
 const UNDO_MS = 8000;                     // 결제 직후 되돌릴 수 있는 시간
 const LS_PIN = 'gujip.pin';
 const SAVER_CHOICES = [0, 1, 3, 5, 10];   // 화면 보호 대기 시간(분). 0 = 끔
@@ -145,7 +145,11 @@ const DB = (() => {
         };
       }
     };
-    req.onsuccess = () => { const db = req.result; db.onversionchange = () => db.close(); res(db); };
+    req.onsuccess = () => {
+      const db = req.result;
+      db.onversionchange = () => { db.close(); dbp = null; };   // 다른 창이 DB를 올리면 닫고 다음에 다시 엽니다
+      res(db);
+    };
     req.onerror = () => rej(req.error || new Error('DB를 열 수 없습니다'));
   }));
   // 트랜잭션 하나 안에서 fn(stores)를 실행하고, 트랜잭션이 끝나면 fn의 결과를 돌려줍니다.
@@ -442,7 +446,7 @@ function periodRange(mode, anchor) {
 }
 function periodLabel(mode, s, e) {
   if (mode === 'day') return `${s.getFullYear()}년 ${s.getMonth() + 1}월 ${s.getDate()}일 (${DAYS[s.getDay()]})`;
-  if (mode === 'week') { const l = addDays(e, -1); return `${s.getMonth() + 1}월 ${s.getDate()}일 ~ ${l.getMonth() + 1}월 ${l.getDate()}일`; }
+  if (mode === 'week') { const l = addDays(e, -1); return `${s.getFullYear()}년 ${s.getMonth() + 1}월 ${s.getDate()}일 ~ ${l.getMonth() + 1}월 ${l.getDate()}일`; }
   if (mode === 'month') return `${s.getFullYear()}년 ${s.getMonth() + 1}월`;
   return `${s.getFullYear()}년`;
 }
@@ -677,7 +681,8 @@ async function render() {
  * 서비스 워커가 새 버전을 설치하면 알려 줍니다. 테이블 화면에서 아무것도 하지 않는 중이면 바로 새로고침하고,
  * 주문·결제 중이면 기다렸다가 테이블 화면으로 돌아오거나 화면 보호가 켜질 때 새로고침합니다.
  * 주문 내용은 폰에 저장되어 있어 새로고침해도 사라지지 않습니다. */
-const appIdle = () => state.view === 'tables' && !state.payOpen && !state.paying && !$('#modal-root').firstChild;
+const undoPending = () => !!(state.lastPay && Date.now() - state.lastPay.at < UNDO_MS);
+const appIdle = () => state.view === 'tables' && !state.payOpen && !state.paying && !undoPending() && !$('#modal-root').firstChild;
 function onUpdateReady() {
   if (state.updateReady) return;
   state.updateReady = true;
@@ -940,7 +945,7 @@ async function exportCSV() {
   const sales = await DB.all();
   const rows = [['일시', '테이블', '메뉴', '주문금액', '할인', '결제금액', '결제수단']];
   for (const r of sales) {
-    rows.push([`${dateKey(new Date(r.ts))} ${timeLabel(r.ts)}`, r.tableName, r.items.map(i => `${i.name} ${i.qty}`).join(' / '), r.subtotal, r.discount, r.total, r.method === 'cash' ? '현금' : '카드']);
+    rows.push([`${dateKey(new Date(r.ts))} ${timeLabel(r.ts)}`, r.tableName, r.items.map(i => `${i.name} ${i.qty}`).join(' / '), r.subtotal || 0, r.discount || 0, r.total || 0, r.method === 'cash' ? '현금' : '카드']);
   }
   const csv = '﻿' + rows.map(r => r.map(v => `"${String(v).replace(/"/g, '""')}"`).join(',')).join('\r\n');
   await shareOrDownload(new Blob([csv], { type: 'text/csv' }), `${settings.storeName}-매출-${dateKey(new Date())}.csv`);
@@ -1067,6 +1072,15 @@ document.addEventListener('click', e => {
   if (r && typeof r.catch === 'function') r.catch(err => alert('오류가 생겼습니다.\n' + (err.message || err)));
 });
 
+// 클라우드 로그인 칸에서 Enter를 누르면 로그인
+document.addEventListener('keydown', e => {
+  if (e.key === 'Enter' && e.target && (e.target.id === 'cloud-pw' || e.target.id === 'cloud-email')) {
+    e.preventDefault();
+    const r = actions['cloud-login']();
+    if (r && r.catch) r.catch(err => alert('오류가 생겼습니다.\n' + (err.message || err)));
+  }
+});
+
 document.addEventListener('change', e => {
   const el = e.target.closest('[data-field]'); if (!el) return;
   const f = el.dataset.field, id = el.dataset.id;
@@ -1092,7 +1106,8 @@ document.addEventListener('change', e => {
   else if (f === 'menu-cash') {
     const x = settings.menu.find(v => v.id === id); if (!x) return;
     const v = el.value.trim() === '' ? NaN : Math.round(Number(el.value));
-    if (isFinite(v) && v >= 0 && v < x.price) x.cashPrice = v; else delete x.cashPrice;
+    if (isFinite(v) && v >= 0 && v < x.price) x.cashPrice = v;
+    else { delete x.cashPrice; if (isFinite(v)) toast('현금가는 정가보다 낮아야 합니다. 비워 두면 할인 없음'); }
     el.value = x.cashPrice != null ? x.cashPrice : '';
   }
   else if (f === 'table-seats') {

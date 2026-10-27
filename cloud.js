@@ -166,14 +166,20 @@ window.Cloud = (() => {
     }
   }
 
-  /* 받아오기: 마지막으로 받은 시각 이후에 바뀐 기록만 */
+  /* 받아오기: 마지막으로 받은 시각 이후에 바뀐 기록만.
+   * 한 번에 묶어 올린 기록은 모두 같은 시각(updatedAt)을 가지므로 '이후(>)'가 아니라 '이상(>=)'으로 묻고,
+   * 한 번의 받아오기 안에서는 마지막 문서를 기준(startAfter)으로 다음 쪽을 넘깁니다. 같은 기록이 다시 와도 내용이 같으면 건너뜁니다. */
+  const later = (a, b) => !b || a.s > b.s || (a.s === b.s && a.n > b.n);
   async function pull() {
     const col = fb.collection(fs, 'users', user.uid, 'sales');
     let since = lsGet(LS_SINCE);
-    let changed = 0;
+    let cursor = null, changed = 0, pages = 0;
     for (;;) {
-      const cons = [fb.orderBy('updatedAt'), fb.limit(PAGE)];
-      if (since) cons.unshift(fb.where('updatedAt', '>', new fb.Timestamp(since.s, since.n)));
+      const cons = [];
+      if (since) cons.push(fb.where('updatedAt', '>=', new fb.Timestamp(since.s, since.n)));
+      cons.push(fb.orderBy('updatedAt'));
+      if (cursor) cons.push(fb.startAfter(cursor));
+      cons.push(fb.limit(PAGE));
       const snap = await withTimeout(fb.getDocsFromServer(fb.query(col, ...cons)));
       const docs = snap.docs.map(d => {
         const v = d.data();
@@ -184,11 +190,10 @@ window.Cloud = (() => {
       });
       if (!docs.length) break;
       changed += await opts.db.applyRemote(docs);
-      for (const d of docs) {
-        if (d.at && (!since || d.at.s > since.s || (d.at.s === since.s && d.at.n > since.n))) since = d.at;
-      }
+      for (const d of docs) if (d.at && later(d.at, since)) since = d.at;
       lsSet(LS_SINCE, since);
-      if (docs.length < PAGE) break;
+      if (docs.length < PAGE || ++pages >= 200) break;
+      cursor = snap.docs[snap.docs.length - 1];
     }
     return changed;
   }
