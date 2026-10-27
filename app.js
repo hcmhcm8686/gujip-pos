@@ -11,23 +11,39 @@ const TAKEOUT_ID = 'takeout';
 const DAYS = ['일', '월', '화', '수', '목', '금', '토'];
 const MODE_LABEL = { day: '일', week: '주', month: '월', year: '년' };
 
+/* 가게 도면의 고정 표시(테이블 아님). 위치는 도면 영역의 % 단위 */
+const LANDMARKS = [
+  { name: '주방', x: 90, y: 3, w: 9, h: 36 },
+  { name: '입구', x: 1, y: 78, w: 9, h: 20 },
+];
+
 function DEFAULT_SETTINGS() {
   return {
     storeName: '그집추어탕',
     cashDiscount: 10,
+    layoutVersion: 2,
+    menuVersion: 2,
+    /* noDiscount: 현금 할인에서 제외되는 메뉴(주류·음료) */
     menu: [
       { id: 'm_chueo', name: '추어탕', price: 10000 },
       { id: 'm_jeyuk', name: '제육정식', price: 10000 },
       { id: 'm_bangye', name: '반계탕', price: 11000 },
-      { id: 'm_soju', name: '소주', price: 4000 },
-      { id: 'm_beer', name: '맥주', price: 4000 },
-      { id: 'm_drink', name: '음료', price: 2000 },
+      { id: 'm_soju', name: '소주', price: 4000, noDiscount: true },
+      { id: 'm_beer', name: '맥주', price: 4000, noDiscount: true },
+      { id: 'm_drink', name: '음료', price: 2000, noDiscount: true },
     ],
+    /* x, y: 도면 영역 안의 위치(%). 주방이 오른쪽 위, 입구가 왼쪽 아래인 도면 기준 */
     tables: [
-      { id: 't1', name: '1번', seats: 4 }, { id: 't2', name: '2번', seats: 4 }, { id: 't3', name: '3번', seats: 4 }, { id: 't4', name: '4번', seats: 4 },
-      { id: 't5', name: '5번', seats: 4 }, { id: 't6', name: '6번', seats: 4 }, { id: 't7', name: '7번', seats: 4 }, { id: 't8', name: '8번', seats: 4 },
-      { id: 't9', name: '9번', seats: 4 }, { id: 't10', name: '10번', seats: 4 },
-      { id: 't11', name: '11번', seats: 2 }, { id: 't12', name: '12번', seats: 2 },
+      { id: 'a1', name: '1번', seats: 2, x: 11.5, y: 3 },
+      { id: 'a2', name: '2번', seats: 4, x: 63.5, y: 3 },
+      { id: 'a3', name: '3번', seats: 2, x: 11.5, y: 22 },
+      { id: 'a4', name: '4번', seats: 4, x: 63.5, y: 22 },
+      { id: 'a5', name: '5번', seats: 4, x: 11.5, y: 43 },
+      { id: 'a6', name: '6번', seats: 4, x: 37.5, y: 49 },
+      { id: 'a7', name: '7번', seats: 4, x: 63.5, y: 45 },
+      { id: 'a8', name: '8번', seats: 4, x: 11.5, y: 69 },
+      { id: 'a9', name: '9번', seats: 4, x: 37.5, y: 76 },
+      { id: 'a10', name: '10번', seats: 4, x: 63.5, y: 72 },
     ],
   };
 }
@@ -52,13 +68,26 @@ function normalizeSettings(raw) {
   const s = Object.assign({}, d, raw && typeof raw === 'object' ? raw : {});
   s.storeName = String(s.storeName || d.storeName);
   s.cashDiscount = Math.min(50, Math.max(0, Math.round(Number(s.cashDiscount) || 0)));
+  // 예전 버전(할인 제외 표시 없음)의 메뉴는 기본 메뉴와 이름이 같은 항목만 제외 표시를 넘겨받습니다.
+  const oldMenu = (Number(raw && raw.menuVersion) || 1) < d.menuVersion;
   s.menu = (Array.isArray(s.menu) && s.menu.length ? s.menu : d.menu)
-    .map(m => ({ id: String(m.id || uid()), name: String(m.name || '메뉴'), price: Math.max(0, Math.round(Number(m.price) || 0)) }));
-  s.tables = (Array.isArray(s.tables) && s.tables.length ? s.tables : d.tables)
-    .map(t => {
-      const seats = Math.round(Number(t.seats) || 0);
-      return Object.assign({ id: String(t.id || uid()), name: String(t.name || '테이블') }, seats > 0 ? { seats } : {});
+    .map(m => {
+      const base = oldMenu ? d.menu.find(x => x.name === m.name) : null;
+      const noDiscount = m.noDiscount != null ? !!m.noDiscount : !!(base && base.noDiscount);
+      return { id: String(m.id || uid()), name: String(m.name || '메뉴'), price: Math.max(0, Math.round(Number(m.price) || 0)), noDiscount };
     });
+  s.menuVersion = d.menuVersion;
+  // 예전 버전(도면 위치 없음)의 테이블 설정은 새 도면 기본값으로 바꿉니다.
+  const oldLayout = (Number(raw && raw.layoutVersion) || 1) < d.layoutVersion;
+  s.tables = (!oldLayout && Array.isArray(s.tables) && s.tables.length ? s.tables : d.tables)
+    .map(t => {
+      const out = { id: String(t.id || uid()), name: String(t.name || '테이블') };
+      const seats = Math.round(Number(t.seats) || 0);
+      if (seats > 0) out.seats = seats;
+      if (t.x != null && t.y != null && isFinite(Number(t.x)) && isFinite(Number(t.y))) { out.x = Number(t.x); out.y = Number(t.y); }
+      return out;
+    });
+  s.layoutVersion = d.layoutVersion;
   return s;
 }
 
@@ -122,7 +151,18 @@ const itemSummary = (o, max = 3) => {
   return p.slice(0, max).join(', ') + (p.length > max ? ` 외 ${p.length - max}` : '');
 };
 const tableName = id => id === TAKEOUT_ID ? '포장' : ((settings.tables.find(t => t.id === id) || {}).name || '테이블');
-const cashTotalOf = subtotal => Math.round(subtotal * (100 - settings.cashDiscount) / 100 / 10) * 10;
+/* 현금 할인 제외 여부: 주문에 담을 때 기록된 값을 우선, 없으면 현재 메뉴 설정을 따름 */
+const isNoDiscount = i => {
+  if (i.noDiscount != null) return !!i.noDiscount;
+  const m = settings.menu.find(x => x.id === i.menuId);
+  return !!(m && m.noDiscount);
+};
+/* 현금 결제 금액: 할인 대상 메뉴만 할인율 적용, 10원 단위로 반올림 */
+function cashTotalOf(items) {
+  const rate = settings.cashDiscount;
+  const total = items.reduce((acc, i) => acc + i.price * i.qty * (isNoDiscount(i) ? 1 : (100 - rate) / 100), 0);
+  return Math.round(total / 10) * 10;
+}
 const todayLabel = () => { const d = new Date(); return `${d.getMonth() + 1}월 ${d.getDate()}일 (${DAYS[d.getDay()]})`; };
 
 /* ---------- 화면 ---------- */
@@ -138,24 +178,32 @@ async function viewTables() {
     const recs = await DB.range(s.getTime(), addDays(s, 1).getTime());
     todayTotal = sum(recs, r => r.total); todayCount = recs.length;
   } catch (e) { /* 표시만 생략 */ }
-  const card = (t, extra = '') => {
+  const card = (t, extra = '', style = '') => {
     const o = open[t.id]; const busy = hasItems(o);
     const isTakeout = t.id === TAKEOUT_ID;
-    const emptyLabel = isTakeout ? '포장 주문 받기' : (t.seats ? `${t.seats}인석 · 비어 있음` : '비어 있음');
-    return `<button class="table-card ${busy ? 'busy' : ''} ${extra}" data-action="open-table" data-id="${t.id}">
+    const onFloor = extra === 'on-floor';
+    const emptyLabel = isTakeout ? '포장 주문 받기'
+      : onFloor ? (t.seats ? `${t.seats}인석` : '비어 있음')
+      : (t.seats ? `${t.seats}인석 · 비어 있음` : '비어 있음');
+    return `<button class="table-card ${busy ? 'busy' : ''} ${extra}" data-action="open-table" data-id="${t.id}"${style ? ` style="${style}"` : ''}>
       <span class="table-name">${esc(t.name)}</span>
       ${busy
-        ? `<span class="table-amount">${won(orderTotal(o))}</span><span class="table-items">${esc(itemSummary(o))}</span>`
+        ? `<span class="table-amount">${won(orderTotal(o))}</span><span class="table-items">${esc(itemSummary(o, onFloor ? 2 : 3))}</span>`
         : `<span class="table-empty">${emptyLabel}</span>`}
     </button>`;
   };
+  const placed = settings.tables.filter(t => t.x != null && t.y != null);
+  const unplaced = settings.tables.filter(t => t.x == null || t.y == null);
+  const floor = placed.length ? `<div class="floor">
+      ${LANDMARKS.map(l => `<div class="landmark" style="left:${l.x}%;top:${l.y}%;width:${l.w}%;height:${l.h}%"><span>${esc(l.name)}</span></div>`).join('')}
+      ${placed.map(t => card(t, 'on-floor', `left:${t.x}%;top:${t.y}%`)).join('')}
+    </div>` : '';
   return `<header class="topbar"><h1>${esc(settings.storeName)}</h1><span class="topbar-sub">${todayLabel()}</span></header>
   <main class="content">
     <button class="today-strip" data-action="nav" data-view="sales"><span>오늘 매출 <strong>${won(todayTotal)}</strong></span><span>${todayCount}건 ›</span></button>
-    <div class="table-grid ${settings.tables.length > 8 ? 'cols-3' : ''}">
-      ${card({ id: TAKEOUT_ID, name: '포장' }, 'takeout wide')}
-      ${settings.tables.map(t => card(t)).join('')}
-    </div>
+    <div class="table-grid">${card({ id: TAKEOUT_ID, name: '포장' }, 'takeout wide')}</div>
+    ${floor}
+    ${unplaced.length ? `<div class="table-grid ${unplaced.length > 8 ? 'cols-3' : ''}">${unplaced.map(t => card(t)).join('')}</div>` : ''}
   </main>${nav('tables')}`;
 }
 
@@ -191,15 +239,21 @@ function viewOrder() {
       <div class="total-line"><span>합계</span><strong>${won(total)}</strong></div>
       <button class="btn pay-btn" data-action="open-pay" ${filled ? '' : 'disabled'}>결제하기</button>
     </footer>
-    ${state.payOpen ? payModal(total) : ''}`;
+    ${state.payOpen ? payModal(o) : ''}`;
 }
 
-function payModal(total) {
+function payModal(o) {
+  const items = o.items.filter(i => i.qty > 0);
+  const total = orderTotal(o);
+  const cash = cashTotalOf(items);
   const rate = settings.cashDiscount;
+  let note = '';
+  if (rate > 0 && cash < total) note = items.some(isNoDiscount) ? `음식만 ${rate}% 할인 (주류·음료 제외)` : `${rate}% 할인 적용`;
+  else if (rate > 0) note = '할인 대상 메뉴 없음';
   return `<div class="overlay" data-action="close-pay"><div class="modal" data-action="noop">
     <h2>결제</h2>
     <p class="modal-amount">주문 금액 <strong>${won(total)}</strong></p>
-    <button class="btn cash" data-action="pay" data-method="cash">현금 ${won(cashTotalOf(total))}${rate ? `<small>${rate}% 할인 적용</small>` : ''}</button>
+    <button class="btn cash" data-action="pay" data-method="cash">현금 ${won(cash)}${note ? `<small>${note}</small>` : ''}</button>
     <button class="btn card" data-action="pay" data-method="card">카드 ${won(total)}</button>
     <button class="btn ghost" data-action="close-pay">돌아가기</button>
   </div></div>`;
@@ -300,13 +354,14 @@ function viewSettings() {
       <button class="icon-btn" data-action="move" data-kind="${kind}" data-id="${x.id}" data-dir="-1" ${i === 0 ? 'disabled' : ''}>▲</button>
       <button class="icon-btn" data-action="move" data-kind="${kind}" data-id="${x.id}" data-dir="1" ${i === list.length - 1 ? 'disabled' : ''}>▼</button>
       <button class="icon-btn danger" data-action="del" data-kind="${kind}" data-id="${x.id}">✕</button>
+      ${kind === 'menu' ? `<label class="check-row"><input type="checkbox" data-field="menu-nodiscount" data-id="${x.id}" ${x.noDiscount ? 'checked' : ''}><span>현금 할인 제외 (주류·음료 등)</span></label>` : ''}
     </div>`).join('');
   return `<header class="topbar"><h1>설정</h1></header>
   <main class="content settings">
     <section class="card"><h2>가게</h2>
       <label class="field"><span>가게 이름</span><input type="text" data-field="storeName" value="${esc(settings.storeName)}"></label>
       <label class="field"><span>현금 결제 할인 (%)</span><input type="number" inputmode="numeric" min="0" max="50" data-field="cashDiscount" value="${settings.cashDiscount}"></label>
-      <p class="help">현금을 누르면 할인된 금액으로 기록됩니다. 0으로 두면 할인 없음.</p>
+      <p class="help">현금을 누르면 할인된 금액으로 기록됩니다. 0으로 두면 할인 없음. 아래 메뉴에서 "현금 할인 제외"를 켠 메뉴(소주·맥주·음료)는 할인하지 않습니다.</p>
     </section>
     <section class="card"><h2>메뉴 (이름 · 가격)</h2>
       ${editList('menu', settings.menu)}
@@ -315,6 +370,7 @@ function viewSettings() {
     <section class="card"><h2>테이블 (이름 · 인원)</h2>
       ${editList('table', settings.tables)}
       <button class="btn outline" data-action="add" data-kind="table">+ 테이블 추가</button>
+      <p class="help">테이블 위치는 가게 도면에 맞춰 고정되어 있습니다(주방 오른쪽 위, 입구 왼쪽 아래). 새로 추가한 테이블은 도면 아래에 따로 표시됩니다. 배치를 바꾸려면 Claude에게 요청하세요.</p>
     </section>
     <section class="card"><h2>데이터</h2>
       <button class="btn outline" data-action="export-json">백업 파일 내보내기</button>
@@ -380,7 +436,7 @@ function changeQty(menuId, delta) {
   let it = o.items.find(i => i.menuId === menuId);
   if (!it) {
     if (!m || delta <= 0) return;
-    it = { menuId, name: m.name, price: m.price, qty: 0 };
+    it = { menuId, name: m.name, price: m.price, qty: 0, noDiscount: !!m.noDiscount };
     o.items.push(it);
   }
   it.qty = Math.max(0, it.qty + delta);
@@ -395,13 +451,14 @@ async function pay(method) {
   if (!hasItems(o)) return;
   state.paying = true;
   try {
+    const items = o.items.filter(i => i.qty > 0);
     const subtotal = orderTotal(o);
-    const total = method === 'cash' ? cashTotalOf(subtotal) : subtotal;
+    const total = method === 'cash' ? cashTotalOf(items) : subtotal;
     const now = new Date();
     await DB.add({
       ts: now.getTime(), dateKey: dateKey(now),
       tableId: state.tableId, tableName: tableName(state.tableId),
-      items: o.items.filter(i => i.qty > 0).map(i => ({ name: i.name, price: i.price, qty: i.qty })),
+      items: items.map(i => ({ name: i.name, price: i.price, qty: i.qty, noDiscount: isNoDiscount(i) })),
       subtotal, discountRate: method === 'cash' ? settings.cashDiscount : 0, discount: subtotal - total, total, method,
     });
     delete open[state.tableId]; saveOpen();
@@ -552,6 +609,10 @@ document.addEventListener('change', e => {
   else if (f === 'menu-price') {
     const x = settings.menu.find(v => v.id === id); if (!x) return;
     x.price = Math.max(0, Math.round(Number(el.value) || 0)); el.value = x.price;
+  }
+  else if (f === 'menu-nodiscount') {
+    const x = settings.menu.find(v => v.id === id); if (!x) return;
+    x.noDiscount = !!el.checked;
   }
   else if (f === 'table-seats') {
     const x = settings.tables.find(v => v.id === id); if (!x) return;

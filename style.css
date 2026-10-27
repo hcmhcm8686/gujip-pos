@@ -22,7 +22,15 @@ input{font:inherit;color:inherit}
 /* 테이블 화면 */
 .today-strip{display:flex;align-items:center;justify-content:space-between;width:100%;min-height:60px;padding:0 16px;margin-bottom:12px;border-radius:var(--radius);background:#fff;border:1px solid var(--line);font-weight:700;font-size:.95rem;color:var(--muted)}
 .today-strip strong{color:var(--primary);font-size:1.25rem;margin-left:6px}
-.table-grid{display:grid;grid-template-columns:repeat(2,1fr);gap:12px}
+.table-grid{display:grid;grid-template-columns:repeat(2,1fr);gap:12px;margin-bottom:12px}
+/* 가게 도면: 테이블을 실제 위치(%)에 배치 */
+.floor{position:relative;width:100%;max-width:520px;margin:0 auto 12px;aspect-ratio:10/12;background:#faf7f2;border:1px solid var(--line);border-radius:var(--radius)}
+.floor .table-card{position:absolute;width:25%;height:16%;min-height:0;padding:2px 4px;gap:1px;border-radius:12px;overflow:hidden}
+.floor .table-name{font-size:1.05rem;line-height:1.15}
+.floor .table-amount{font-size:.85rem;line-height:1.15}
+.floor .table-items{font-size:.68rem;line-height:1.15;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:100%}
+.floor .table-empty{font-size:.72rem}
+.landmark{position:absolute;display:flex;align-items:center;justify-content:center;background:#e9e4dc;color:var(--muted);border-radius:10px;font-weight:800;font-size:.85rem;writing-mode:vertical-rl;letter-spacing:.25em}
 .table-grid.cols-3{grid-template-columns:repeat(3,1fr);gap:10px}
 .table-grid.cols-3 .table-card{min-height:104px;padding:8px 6px}
 .table-grid.cols-3 .table-name{font-size:1.25rem}
@@ -136,6 +144,8 @@ input{font:inherit;color:inherit}
 .edit-row input{height:54px;border:2px solid var(--line);border-radius:12px;padding:0 10px;min-width:0;background:#fff;font-size:1rem}
 .edit-row.stack .edit-name{grid-column:1/-1}
 .with-unit{display:flex;align-items:center;gap:6px;font-weight:700;color:var(--muted);font-size:.9rem}
+.check-row{grid-column:1/-1;display:flex;align-items:center;gap:10px;min-height:44px;font-size:.9rem;font-weight:700;color:var(--text)}
+.check-row input{width:26px;height:26px;margin:0;accent-color:var(--primary)}
 .edit-num{width:6em}
 .icon-btn{width:46px;height:54px;border-radius:12px;background:#f1ede6;font-weight:800;font-size:1rem;flex:none}
 .icon-btn.danger{color:var(--red)}
