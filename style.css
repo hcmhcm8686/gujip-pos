@@ -124,6 +124,21 @@ input{font:inherit;color:inherit;background:var(--card)}
 .modal-msg{margin:4px 0 6px;font-size:1.1rem;text-align:center;white-space:pre-line;line-height:1.5;font-weight:700}
 .modal-btns{display:flex;gap:10px}
 .modal-btns .btn{flex:1}
+.overlay.center{align-items:center}
+.modal-msg.small{margin:0;font-size:1rem;font-weight:600;color:var(--muted)}
+.secret-input{width:100%;height:62px;border:1px solid var(--line-strong);border-radius:12px;padding:0 14px;font-size:1.2rem;background:var(--card);color:var(--text)}
+.secret-input.pin{font-size:1.6rem;letter-spacing:.45em;text-align:center}
+.modal .text-btn{align-self:center;color:var(--muted);font-size:.9rem;text-decoration:underline}
+.cloud-status{display:flex;flex-direction:column;gap:4px;margin-bottom:12px;font-size:.92rem;font-weight:700}
+.cloud-status:empty{display:none}
+.cloud-status .ok{color:var(--green)}
+.cloud-status .warn{color:var(--busy)}
+.cloud-status .err{color:var(--red)}
+.cloud-status .muted{font-weight:600}
+.cloud-dot{display:none;width:10px;height:10px;border-radius:50%;margin-left:8px;vertical-align:1px;box-shadow:0 0 0 2px rgba(255,255,255,.7)}
+.cloud-dot.ok{display:inline-block;background:#3ccf7a}
+.cloud-dot.wait{display:inline-block;background:#f5b335}
+.cloud-dot.err{display:inline-block;background:#ef5350}
 .toast{position:fixed;left:50%;bottom:110px;transform:translateX(-50%);z-index:30;background:#222;color:#fff;padding:14px 22px;border-radius:14px;font-weight:800;font-size:1.05rem;max-width:92vw;text-align:center;box-shadow:0 6px 20px rgba(0,0,0,.25)}
 .toast.ok{background:var(--green)}
 

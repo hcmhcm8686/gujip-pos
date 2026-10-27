@@ -1,10 +1,12 @@
 /* 그집추어탕 주문·매출 앱
  * - 테이블을 누르고 메뉴를 담은 뒤 현금/카드로 결제하면 매출이 기록됩니다.
- * - 매출은 폰 안의 IndexedDB에 저장되고, 설정에서 백업/복원할 수 있습니다.
+ * - 매출은 폰 안의 IndexedDB에 저장되고(원본), 클라우드에 연결하면 Firebase에도 자동으로 올라갑니다(cloud.js).
+ * - 설정에서 백업/복원할 수 있고, 전체 삭제·복원에는 관리자 비밀번호가 필요합니다.
  */
 'use strict';
 
-const APP_VERSION = '1.0.0';
+const APP_VERSION = '1.1.0';
+const LS_PIN = 'gujip.pin';
 const LS_SETTINGS = 'gujip.settings';
 const LS_OPEN = 'gujip.open';
 const TAKEOUT_ID = 'takeout';
@@ -100,39 +102,150 @@ function normalizeSettings(raw) {
 }
 
 /* ---------- 저장소 (IndexedDB) ----------
- * 나중에 Firebase 등으로 바꾸려면 이 DB 객체만 교체하면 됩니다. */
+ * sales : 매출 기록(이 폰의 원본). 기록마다 고유번호 uid가 있어 기기 사이에서 같은 기록을 알아봅니다.
+ * outbox: 클라우드에 아직 올리지 못한 변경(기록 uid마다 1건). 클라우드에 연결된 동안에만 쌓입니다. */
+const newRecordId = () => (window.crypto && crypto.randomUUID)
+  ? crypto.randomUUID()
+  : 'r' + Date.now().toString(36) + Math.random().toString(36).slice(2, 10) + Math.random().toString(36).slice(2, 10);
+const canon = v => Array.isArray(v) ? '[' + v.map(canon).join(',') + ']'
+  : v && typeof v === 'object' ? '{' + Object.keys(v).sort().map(k => JSON.stringify(k) + ':' + canon(v[k])).join(',') + '}'
+  : JSON.stringify(v === undefined ? null : v);
 const DB = (() => {
   let dbp = null;
+  let tracking = false;
+  const W = ['sales', 'outbox'];
+  const reqP = r => new Promise((res, rej) => { r.onsuccess = () => res(r.result); r.onerror = () => rej(r.error); });
+  const entry = (uid, op) => ({ uid, op, at: newRecordId() });
   const open = () => dbp || (dbp = new Promise((res, rej) => {
-    const req = indexedDB.open('gujip-pos', 1);
-    req.onupgradeneeded = () => {
-      const st = req.result.createObjectStore('sales', { keyPath: 'id', autoIncrement: true });
-      st.createIndex('ts', 'ts');
+    const req = indexedDB.open('gujip-pos', 2);
+    req.onupgradeneeded = ev => {
+      const db = req.result;
+      const sales = ev.oldVersion < 1
+        ? db.createObjectStore('sales', { keyPath: 'id', autoIncrement: true })
+        : req.transaction.objectStore('sales');
+      if (ev.oldVersion < 1) sales.createIndex('ts', 'ts');
+      if (ev.oldVersion < 2) {
+        sales.createIndex('uid', 'uid');
+        db.createObjectStore('outbox', { keyPath: 'uid' });
+        // 예전 기록에도 고유번호를 붙여 둡니다.
+        sales.openCursor().onsuccess = e => {
+          const c = e.target.result; if (!c) return;
+          if (!c.value.uid) { const v = c.value; v.uid = newRecordId(); c.update(v); }
+          c.continue();
+        };
+      }
     };
-    req.onsuccess = () => res(req.result);
+    req.onsuccess = () => { const db = req.result; db.onversionchange = () => db.close(); res(db); };
     req.onerror = () => rej(req.error || new Error('DB를 열 수 없습니다'));
   }));
-  async function run(mode, fn) {
+  // 트랜잭션 하나 안에서 fn(stores)를 실행하고, 트랜잭션이 끝나면 fn의 결과를 돌려줍니다.
+  async function tx(names, mode, fn) {
     const db = await open();
     return new Promise((res, rej) => {
-      const t = db.transaction('sales', mode);
-      const st = t.objectStore('sales');
-      let result;
-      const req = fn(st);
-      if (req) req.onsuccess = () => { result = req.result; };
-      t.oncomplete = () => res(result);
-      t.onerror = () => rej(t.error || new Error('저장 실패'));
-      t.onabort = () => rej(t.error || new Error('저장 취소됨'));
+      const t = db.transaction(names, mode);
+      const s = {};
+      [].concat(names).forEach(n => { s[n] = t.objectStore(n); });
+      let out, err = null;
+      fn(s).then(v => { out = v; }, e => { err = e; try { t.abort(); } catch (x) { /* 이미 끝남 */ } });
+      t.oncomplete = () => (err ? rej(err) : res(out));
+      t.onerror = () => rej(err || t.error || new Error('저장 실패'));
+      t.onabort = () => rej(err || t.error || new Error('저장 취소됨'));
     });
   }
-  return {
-    add: rec => run('readwrite', st => st.add(rec)),
-    range: (a, b) => run('readonly', st => st.index('ts').getAll(IDBKeyRange.bound(a, b, false, true))),
-    remove: id => run('readwrite', st => st.delete(id)),
-    all: () => run('readonly', st => st.getAll()),
-    clear: () => run('readwrite', st => st.clear()),
-    bulkAdd: list => run('readwrite', st => { list.forEach(r => st.add(r)); return null; }),
+  const api = {
+    onTracked: null,                        // 클라우드에 올릴 변경이 생기면 호출
+    setTracking(on) { tracking = !!on; },
+    isTracking: () => tracking,
+    async add(rec) {
+      if (!rec.uid) rec.uid = newRecordId();
+      const id = await tx(W, 'readwrite', async s => {
+        const newId = await reqP(s.sales.add(rec));
+        if (tracking) s.outbox.put(entry(rec.uid, 'put'));
+        return newId;
+      });
+      changed();
+      return id;
+    },
+    range: (a, b) => tx('sales', 'readonly', s => reqP(s.sales.index('ts').getAll(IDBKeyRange.bound(a, b, false, true)))),
+    all: () => tx('sales', 'readonly', s => reqP(s.sales.getAll())),
+    getByUid: u => tx('sales', 'readonly', s => reqP(s.sales.index('uid').get(u))),
+    async remove(id) {
+      await tx(W, 'readwrite', async s => {
+        const rec = await reqP(s.sales.get(id));
+        if (!rec) return;
+        s.sales.delete(id);
+        if (tracking && rec.uid) s.outbox.put(entry(rec.uid, 'del'));
+      });
+      changed();
+    },
+    /* 전체 삭제: 클라우드에 연결되어 있으면 클라우드 기록도 삭제 표시 */
+    async clearAll() {
+      await tx(W, 'readwrite', async s => {
+        if (tracking) (await reqP(s.sales.getAll())).forEach(r => { if (r.uid) s.outbox.put(entry(r.uid, 'del')); });
+        s.sales.clear();
+      });
+      changed();
+    },
+    /* 백업 복원: 지금 기록을 모두 지우고 백업 내용으로 바꿈 */
+    async replaceAll(list) {
+      await tx(W, 'readwrite', async s => {
+        if (tracking) (await reqP(s.sales.getAll())).forEach(r => { if (r.uid) s.outbox.put(entry(r.uid, 'del')); });
+        s.sales.clear();
+        for (const r0 of list) {
+          const r = Object.assign({}, r0);
+          delete r.id;
+          if (!r.uid) r.uid = newRecordId();
+          s.sales.add(r);
+          if (tracking) s.outbox.put(entry(r.uid, 'put'));
+        }
+      });
+      changed();
+    },
+    /* 처음 클라우드에 연결할 때: 이 폰의 기록을 모두 올릴 대상으로 */
+    markAllForUpload: () => tx(W, 'readwrite', async s => {
+      (await reqP(s.sales.getAll())).forEach(r => {
+        if (!r.uid) { r.uid = newRecordId(); s.sales.put(r); }
+        s.outbox.put(entry(r.uid, 'put'));
+      });
+    }),
+    outboxList: n => tx('outbox', 'readonly', s => reqP(s.outbox.getAll(null, n))),
+    outboxCount: () => tx('outbox', 'readonly', s => reqP(s.outbox.count())),
+    outboxClear: () => tx('outbox', 'readwrite', async s => { s.outbox.clear(); }),
+    /* 올리기에 성공한 항목만 지움(그 사이에 또 바뀐 항목은 남김) */
+    outboxDone: entries => tx('outbox', 'readwrite', async s => {
+      for (const e of entries) {
+        const cur = await reqP(s.outbox.get(e.uid));
+        if (cur && cur.at === e.at) s.outbox.delete(e.uid);
+      }
+    }),
+    /* 다른 기기에서 받아온 변경 반영. 바뀐 건수를 돌려줌 */
+    applyRemote: docs => tx(W, 'readwrite', async s => {
+      let n = 0;
+      for (const d of docs) {
+        if (await reqP(s.outbox.get(d.uid))) continue;   // 이 폰에서 아직 올리지 못한 변경이 우선
+        const local = await reqP(s.sales.index('uid').getAll(d.uid));
+        if (d.deleted) {
+          local.forEach(r => s.sales.delete(r.id));
+          n += local.length;
+          continue;
+        }
+        const rec = Object.assign({}, d.rec, { uid: d.uid });
+        if (local.length) {
+          const mine = Object.assign({}, local[0]); delete mine.id;
+          local.slice(1).forEach(r => { s.sales.delete(r.id); n++; });
+          if (canon(mine) === canon(rec)) continue;
+          rec.id = local[0].id;
+          s.sales.put(rec);
+        } else {
+          s.sales.add(rec);
+        }
+        n++;
+      }
+      return n;
+    }),
   };
+  function changed() { if (tracking && api.onTracked) { try { api.onTracked(); } catch (e) { /* 무시 */ } } }
+  return api;
 })();
 
 /* ---------- 상태 ---------- */
@@ -150,6 +263,7 @@ const state = {
   sales: { mode: 'day', anchor: new Date() },
   installPrompt: null,
   persisted: null,
+  cloud: null,             // 클라우드 상태(cloud.js가 알려 줌)
 };
 
 const orderTotal = o => sum(o.items, i => i.price * i.qty);
@@ -235,7 +349,9 @@ async function viewTables() {
       ${LANDMARKS.map(l => `<div class="landmark" style="left:${l.x}%;top:${l.y}%;width:${l.w}%;height:${l.h}%"><span>${esc(l.name)}</span></div>`).join('')}
       ${placed.map(t => card(t, 'on-floor', `left:${t.x}%;top:${t.y}%`)).join('')}
     </div>` : '';
-  return `<header class="topbar"><h1>${esc(settings.storeName)}</h1><span class="topbar-sub">${todayLabel()}</span></header>
+  const cs = state.cloud;
+  const dot = cs && cs.linked ? `<span id="cloud-dot" class="cloud-dot ${cloudDotClass(cs)}"></span>` : '';
+  return `<header class="topbar"><h1>${esc(settings.storeName)}</h1><span class="topbar-sub">${todayLabel()}${dot}</span></header>
   <main class="content">
     <button class="today-strip" data-action="nav" data-view="sales"><span><span class="label">오늘 매출</span><strong>${won(todayTotal)}</strong></span><span class="count">${todayCount}건 ${ICONS.chevron}</span></button>
     <div class="table-grid">${card({ id: TAKEOUT_ID, name: '포장' }, 'takeout wide')}</div>
@@ -415,18 +531,87 @@ function viewSettings() {
     <section class="card"><h2>화면 스타일</h2>
       <div class="theme-row">${Object.entries(THEMES).map(([k, t]) => `<button class="theme-btn ${document.documentElement.dataset.theme === k ? 'active' : ''}" data-action="theme" data-theme="${k}"><span class="theme-swatch" style="background:${t.swatch}"></span>${t.label}</button>`).join('')}</div>
     </section>
+    ${cloudCard()}
+    <section class="card"><h2>관리자 비밀번호</h2>
+      <p class="muted">${hasPin() ? '설정되어 있습니다.' : '아직 정하지 않았습니다.'} '매출 기록 전체 삭제'와 '백업 파일 복원' 때 필요합니다.</p>
+      <button class="btn outline" data-action="pin-set">${hasPin() ? '비밀번호 바꾸기' : '비밀번호 정하기'}</button>
+    </section>
     <section class="card"><h2>데이터</h2>
       <button class="btn outline" data-action="export-json">백업 파일 내보내기</button>
       <button class="btn outline" data-action="export-csv">엑셀용(CSV) 내보내기</button>
       <label class="btn outline">백업 파일 복원<input type="file" accept=".json,application/json" data-field="restore-file" hidden></label>
       <button class="btn outline danger" data-action="wipe">매출 기록 전체 삭제</button>
-      <p class="help">백업 파일은 카카오톡 '나에게 보내기'나 구글 드라이브에 보관해 두세요. 폰이 고장 나도 복원할 수 있습니다.</p>
+      <p class="help">${state.cloud && state.cloud.linked
+        ? '클라우드에 자동 저장되고 있습니다. 백업 파일은 한 번 더 안전하게 보관하고 싶을 때만 내보내면 됩니다.'
+        : "백업 파일은 카카오톡 '나에게 보내기'나 구글 드라이브에 보관해 두세요. 폰이 고장 나도 복원할 수 있습니다."}</p>
     </section>
     <section class="card"><h2>앱 정보</h2>
       ${state.installPrompt ? '<button class="btn primary" data-action="install">홈 화면에 앱 설치</button>' : ''}
       <p class="muted">버전 ${APP_VERSION}<br>저장 공간 보호: ${state.persisted === null ? '확인 중' : state.persisted ? '됨' : '안 됨 (홈 화면에 설치하면 보호됩니다)'}</p>
     </section>
   </main>${nav('settings')}`;
+}
+
+/* --- 클라우드 표시 --- */
+function syncTimeLabel(ms) {
+  const d = new Date(ms), t = `${pad2(d.getHours())}:${pad2(d.getMinutes())}`;
+  return dateKey(d) === dateKey(new Date()) ? `오늘 ${t}` : `${d.getMonth() + 1}월 ${d.getDate()}일 ${t}`;
+}
+function cloudDotClass(s) {
+  if (!s || !s.linked) return '';
+  if (s.phase === 'signedout' || /권한|로그인/.test(s.error || '')) return 'err';
+  if (s.phase !== 'ready' || s.pending > 0 || s.error) return 'wait';
+  return 'ok';
+}
+function cloudStatusHtml(s) {
+  if (!s || !s.configured) return '';
+  const lines = [];
+  if (s.phase === 'loading') lines.push('<span class="muted">클라우드를 불러오는 중…</span>');
+  if (s.signedIn) lines.push(`<span class="ok">연결됨 · ${esc(s.email || '')}</span>`);
+  else if (s.phase === 'signedout') lines.push('<span class="err">다시 로그인이 필요합니다</span>');
+  else if (s.phase === 'login') lines.push('<span class="muted">아직 연결하지 않았습니다</span>');
+  if (s.linked) {
+    lines.push(`<span>마지막 저장: ${s.lastSync ? syncTimeLabel(s.lastSync) : '아직 없음'}</span>`);
+    lines.push(s.pending > 0 ? `<span class="warn">올릴 대기: ${s.pending}건</span>` : '<span>올릴 대기: 없음</span>');
+    if (s.busy) lines.push('<span class="muted">저장하는 중…</span>');
+  }
+  if (s.error) lines.push(`<span class="err">${esc(s.error)}</span>`);
+  return lines.join('');
+}
+function cloudCard() {
+  const s = state.cloud || {};
+  const statusBox = `<div id="cloud-status" class="cloud-status">${cloudStatusHtml(s)}</div>`;
+  let body;
+  if (!s.configured) {
+    body = '<p class="muted">아직 클라우드 설정 전입니다. 설정을 마치면 여기에서 로그인할 수 있습니다. 설정 전에도 앱은 폰 저장만으로 정상 동작합니다.</p>';
+  } else if (s.signedIn) {
+    body = `${statusBox}
+      <button class="btn outline" data-action="cloud-sync">지금 저장하기</button>
+      <button class="btn outline danger" data-action="cloud-logout">로그아웃</button>`;
+  } else if (s.phase === 'loading') {
+    body = statusBox;
+  } else if (s.phase === 'error') {
+    body = `${statusBox}<button class="btn outline" data-action="cloud-retry">다시 시도</button>`;
+  } else {
+    body = `${statusBox}
+      <label class="field"><span>가게 계정 이메일</span><input type="email" id="cloud-email" autocomplete="username" value="${esc(s.email || '')}"></label>
+      <label class="field"><span>비밀번호</span><input type="password" id="cloud-pw" autocomplete="current-password"></label>
+      <button class="btn primary" data-action="cloud-login">로그인</button>`;
+  }
+  return `<section class="card"><h2>클라우드 자동 저장</h2>${body}
+    <p class="help">로그인해 두면 결제할 때마다 매출이 클라우드에도 저장됩니다. 폰이 고장 나도 새 폰에서 같은 계정으로 로그인하면 매출이 그대로 돌아옵니다.</p></section>`;
+}
+let cloudKey = '';
+function onCloudStatus(s) {
+  state.cloud = s;
+  const key = [s.configured, s.linked, s.signedIn, s.phase].join('|');
+  const structural = key !== cloudKey;
+  cloudKey = key;
+  if (structural && (state.view === 'settings' || state.view === 'tables')) { render(); return; }
+  const box = document.getElementById('cloud-status');
+  if (box) box.innerHTML = cloudStatusHtml(s);
+  const dot = document.getElementById('cloud-dot');
+  if (dot) dot.className = 'cloud-dot ' + cloudDotClass(s);
 }
 
 /* ---------- 렌더링 ---------- */
@@ -464,6 +649,70 @@ function ask(message, okLabel = '확인', danger = true) {
     };
   });
 }
+/* 비밀번호 입력 창. 확인 → 입력값, 취소 → null, 보조 버튼 → { extra: true } */
+function promptSecret(title, message, { numeric = true, extra = null } = {}) {
+  return new Promise(res => {
+    const root = $('#modal-root');
+    root.innerHTML = `<div class="overlay center"><div class="modal">
+      <h2>${esc(title)}</h2>
+      ${message ? `<p class="modal-msg small">${esc(message)}</p>` : ''}
+      <input class="secret-input ${numeric ? 'pin' : ''}" type="password" ${numeric ? 'inputmode="numeric" pattern="[0-9]*" maxlength="8"' : ''} autocomplete="off" placeholder="${numeric ? '숫자 4~8자리' : '비밀번호'}">
+      <div class="modal-btns"><button class="btn ghost" data-sec="cancel">취소</button><button class="btn primary" data-sec="ok">확인</button></div>
+      ${extra ? `<button class="text-btn" data-sec="extra">${esc(extra)}</button>` : ''}
+    </div></div>`;
+    const input = root.querySelector('.secret-input');
+    setTimeout(() => { try { input.focus(); } catch (e) { /* 무시 */ } }, 60);
+    const done = v => { root.innerHTML = ''; root.onclick = null; vibrate(); res(v); };
+    root.onclick = ev => {
+      const b = ev.target.closest('[data-sec]'); if (!b) return;
+      const k = b.dataset.sec;
+      done(k === 'cancel' ? null : k === 'extra' ? { extra: true } : input.value.trim());
+    };
+    input.onkeydown = ev => { if (ev.key === 'Enter') done(input.value.trim()); };
+  });
+}
+
+/* ---------- 관리자 비밀번호 ---------- */
+const hasPin = () => { try { return !!localStorage.getItem(LS_PIN); } catch (e) { return false; } };
+const validPin = p => /^\d{4,8}$/.test(p);
+async function pinHash(p) {
+  const buf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode('gujip-pos:' + p));
+  return [...new Uint8Array(buf)].map(b => b.toString(16).padStart(2, '0')).join('');
+}
+async function setupPin() {
+  const a = await promptSecret('새 관리자 비밀번호', '숫자 4~8자리로 정해 주세요.');
+  if (a == null) return false;
+  if (!validPin(a)) { alert('숫자 4~8자리로 입력해 주세요.'); return false; }
+  const b = await promptSecret('비밀번호 확인', '한 번 더 입력해 주세요.');
+  if (b == null) return false;
+  if (a !== b) { alert('두 번 입력한 비밀번호가 다릅니다.\n다시 해 주세요.'); return false; }
+  localStorage.setItem(LS_PIN, await pinHash(a));
+  toast('관리자 비밀번호를 정했습니다', 'ok');
+  return true;
+}
+/* 관리자 비밀번호 확인. 통과하면 true(새로 정한 경우 'new') */
+async function checkPin(purpose) {
+  if (!hasPin()) {
+    if (!await ask(`${purpose}에는 관리자 비밀번호가 필요합니다.\n아직 정하지 않았으니 지금 정할까요?`, '정하기', false)) return false;
+    return (await setupPin()) ? 'new' : false;
+  }
+  const canReset = !!(state.cloud && state.cloud.signedIn);
+  const v = await promptSecret('관리자 비밀번호', `${purpose} 전에 비밀번호를 입력해 주세요.`, { extra: canReset ? '비밀번호를 잊었어요' : null });
+  if (v == null) return false;
+  if (typeof v === 'object') return resetPinViaCloud();
+  if (await pinHash(v) === localStorage.getItem(LS_PIN)) return true;
+  alert('비밀번호가 맞지 않습니다.');
+  return false;
+}
+/* 잊었을 때: 클라우드 계정 비밀번호로 본인 확인 후 새로 정함 */
+async function resetPinViaCloud() {
+  const pw = await promptSecret('본인 확인', '클라우드 가게 계정의 비밀번호를 입력해 주세요.', { numeric: false });
+  if (!pw) return false;
+  try { await Cloud.verifyPassword(pw); } catch (e) { alert('확인하지 못했습니다.\n' + e.message); return false; }
+  localStorage.removeItem(LS_PIN);
+  return (await setupPin()) ? 'new' : false;
+}
+
 let toastTimer = null;
 function toast(msg, kind = '') {
   const t = $('#toast');
@@ -500,6 +749,7 @@ async function pay(method) {
     const total = method === 'cash' ? cashTotalOf(items) : subtotal;
     const now = new Date();
     await DB.add({
+      uid: newRecordId(),
       ts: now.getTime(), dateKey: dateKey(now),
       tableId: state.tableId, tableName: tableName(state.tableId),
       items: items.map(i => ({ name: i.name, price: i.price, qty: i.qty, unit: method === 'cash' ? cashUnitOf(i) : i.price })),
@@ -552,9 +802,10 @@ async function restoreFromFile(file) {
     const data = JSON.parse(await file.text());
     if (!data || data.app !== 'gujip-pos' || !Array.isArray(data.sales)) throw new Error('이 앱의 백업 파일이 아닙니다.');
     const when = (data.exportedAt || '').slice(0, 10);
-    if (!await ask(`백업(${data.sales.length}건, ${when})으로 되돌릴까요?\n지금 있는 매출 기록은 모두 지워집니다.`, '복원')) return;
-    await DB.clear();
-    await DB.bulkAdd(data.sales.map(({ id, ...rest }) => rest));
+    if (!await checkPin('백업 파일 복원')) return;
+    const cloudNote = state.cloud && state.cloud.linked ? '\n클라우드에 저장된 기록도 백업 내용으로 바뀝니다.' : '';
+    if (!await ask(`백업(${data.sales.length}건, ${when})으로 되돌릴까요?\n지금 있는 매출 기록은 모두 지워집니다.${cloudNote}`, '복원')) return;
+    await DB.replaceAll(data.sales);
     if (data.settings) { settings = normalizeSettings(data.settings); saveSettings(); }
     toast('복원 완료', 'ok'); render();
   } catch (e) {
@@ -611,10 +862,41 @@ const actions = {
   'export-json'() { return exportJSON(); },
   'export-csv'() { return exportCSV(); },
   async wipe() {
-    if (!await ask('매출 기록을 전부 삭제할까요?\n되돌릴 수 없습니다.', '전체 삭제')) return;
-    if (!await ask('정말 삭제할까요?\n먼저 백업 파일을 내보내 두는 것을 권합니다.', '네, 삭제')) return;
-    await DB.clear(); toast('매출 기록을 삭제했습니다'); render();
+    if (!await checkPin('매출 기록 전체 삭제')) return;
+    const cloudNote = state.cloud && state.cloud.linked ? '\n클라우드에 저장된 기록도 함께 지워집니다.' : '';
+    if (!await ask(`매출 기록을 전부 삭제할까요?${cloudNote}\n되돌릴 수 없습니다.`, '전체 삭제')) return;
+    await DB.clearAll(); toast('매출 기록을 삭제했습니다'); render();
   },
+  async 'pin-set'() {
+    if (!hasPin()) { if (await setupPin()) render(); return; }
+    const r = await checkPin('비밀번호 변경');
+    if (!r) return;
+    if (r === 'new' || await setupPin()) render();
+  },
+  async 'cloud-login'() {
+    const email = ($('#cloud-email') || {}).value || '';
+    const pw = ($('#cloud-pw') || {}).value || '';
+    if (!email.trim() || !pw) { alert('이메일과 비밀번호를 입력해 주세요.'); return; }
+    try {
+      await Cloud.login(email, pw);
+      toast('클라우드에 연결했습니다', 'ok');
+    } catch (e) {
+      alert('로그인하지 못했습니다.\n' + e.message);
+    }
+  },
+  async 'cloud-logout'() {
+    const n = state.cloud ? state.cloud.pending : 0;
+    const warn = n > 0 ? `\n아직 올리지 못한 기록 ${n}건이 있습니다.` : '';
+    if (!await ask(`클라우드에서 로그아웃할까요?${warn}\n로그아웃하면 이 폰의 매출은 더 이상 클라우드에 저장되지 않습니다.`, '로그아웃')) return;
+    await Cloud.logout(); toast('로그아웃했습니다');
+  },
+  async 'cloud-sync'() {
+    await Cloud.sync();
+    const s = Cloud.status();
+    if (s.error) toast(s.error);
+    else toast(s.pending ? `올릴 대기 ${s.pending}건` : '클라우드에 모두 저장되어 있습니다', s.pending ? '' : 'ok');
+  },
+  'cloud-retry'() { return Cloud.start(); },
   async install() {
     const p = state.installPrompt; if (!p) return;
     p.prompt();
@@ -683,6 +965,15 @@ async function keepAwake() {
 document.addEventListener('visibilitychange', keepAwake);
 
 (async function init() {
+  if (window.Cloud) {
+    DB.onTracked = () => Cloud.kick();
+    Cloud.start({
+      config: window.GUJIP_FIREBASE_CONFIG || null,
+      db: DB,
+      onStatus: onCloudStatus,
+      onRemoteChange: () => { if (state.view === 'tables' || state.view === 'sales') render(); },
+    });
+  }
   render();
   keepAwake();
   if ('serviceWorker' in navigator && (location.protocol === 'https:' || ['localhost', '127.0.0.1'].includes(location.hostname))) {

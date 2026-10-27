@@ -1,7 +1,10 @@
-/* 오프라인 동작용 서비스 워커: 캐시를 먼저 보여주고, 뒤에서 새 파일을 받아 둡니다.
- * (파일을 수정해 올리면 앱을 두 번째 열 때부터 새 버전이 보입니다.) */
-const CACHE = 'gujip-pos-v1';
-const ASSETS = ['./', './index.html', './style.css', './app.js', './manifest.json', './icons/icon-192.png', './icons/icon-512.png'];
+/* 오프라인 동작용 서비스 워커
+ * - 앱 파일: 캐시를 먼저 보여주고, 뒤에서 새 파일을 받아 둡니다(수정본은 앱을 두 번째 열 때 적용).
+ * - Firebase SDK(gstatic): 버전이 주소에 들어 있어 바뀌지 않으므로 한 번 받으면 캐시에서 씁니다.
+ * - Firestore·로그인 통신은 건드리지 않습니다. */
+const CACHE = 'gujip-pos-v2';
+const SDK_CACHE = 'gujip-firebase-sdk';
+const ASSETS = ['./', './index.html', './style.css', './firebase-config.js', './cloud.js', './app.js', './manifest.json', './icons/icon-192.png', './icons/icon-512.png'];
 
 self.addEventListener('install', e => {
   e.waitUntil(caches.open(CACHE).then(c => c.addAll(ASSETS)).then(() => self.skipWaiting()));
@@ -10,14 +13,28 @@ self.addEventListener('install', e => {
 self.addEventListener('activate', e => {
   e.waitUntil(
     caches.keys()
-      .then(keys => Promise.all(keys.filter(k => k !== CACHE).map(k => caches.delete(k))))
+      .then(keys => Promise.all(keys.filter(k => k !== CACHE && k !== SDK_CACHE).map(k => caches.delete(k))))
       .then(() => self.clients.claim())
   );
 });
 
 self.addEventListener('fetch', e => {
   const req = e.request;
-  if (req.method !== 'GET' || new URL(req.url).origin !== self.location.origin) return;
+  if (req.method !== 'GET') return;
+  const url = new URL(req.url);
+
+  if (url.origin === 'https://www.gstatic.com' && url.pathname.startsWith('/firebasejs/')) {
+    e.respondWith(caches.open(SDK_CACHE).then(async cache => {
+      const hit = await cache.match(req);
+      if (hit) return hit;
+      const res = await fetch(req);
+      if (res && res.ok) cache.put(req, res.clone());
+      return res;
+    }));
+    return;
+  }
+
+  if (url.origin !== self.location.origin) return;
   e.respondWith(caches.open(CACHE).then(async cache => {
     const cached = await cache.match(req, { ignoreSearch: true });
     const network = fetch(req).then(res => {
