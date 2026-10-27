@@ -1,6 +1,6 @@
 {
-  "name": "그집추어탕 주문",
-  "short_name": "추어탕 주문",
+  "name": "그집추어탕",
+  "short_name": "그집추어탕",
   "description": "그집추어탕 테이블 주문·결제·매출 앱",
   "start_url": "./index.html",
   "scope": "./",
