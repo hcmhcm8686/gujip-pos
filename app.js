@@ -5,8 +5,9 @@
  */
 'use strict';
 
-const APP_VERSION = '1.1.0';
+const APP_VERSION = '1.2.0';
 const LS_PIN = 'gujip.pin';
+const SAVER_CHOICES = [0, 1, 3, 5, 10];   // 화면 보호 대기 시간(분). 0 = 끔
 const LS_SETTINGS = 'gujip.settings';
 const LS_OPEN = 'gujip.open';
 const TAKEOUT_ID = 'takeout';
@@ -22,6 +23,7 @@ const LANDMARKS = [
 function DEFAULT_SETTINGS() {
   return {
     storeName: '그집추어탕',
+    screensaverMin: 3,
     layoutVersion: 4,
     menuVersion: 3,
     /* cashPrice: 현금 결제 때 적용되는 가격. 없으면 현금도 정가(주류·음료) */
@@ -69,6 +71,8 @@ function normalizeSettings(raw) {
   const d = DEFAULT_SETTINGS();
   const s = Object.assign({}, d, raw && typeof raw === 'object' ? raw : {});
   s.storeName = String(s.storeName || d.storeName);
+  const sm = Number(s.screensaverMin);
+  s.screensaverMin = SAVER_CHOICES.includes(sm) ? sm : d.screensaverMin;
   delete s.cashDiscount; // 예전 '할인율' 방식은 더 이상 쓰지 않음
   // 예전 버전(할인율 + 할인 제외 표시)의 메뉴는 현금가 방식으로 바꿉니다.
   const menuVer = Number(raw && raw.menuVersion) || 1;
@@ -536,6 +540,13 @@ function viewSettings() {
     <section class="card"><h2>화면 스타일</h2>
       <div class="theme-row">${Object.entries(THEMES).map(([k, t]) => `<button class="theme-btn ${document.documentElement.dataset.theme === k ? 'active' : ''}" data-action="theme" data-theme="${k}"><span class="theme-swatch" style="background:${t.swatch}"></span>${t.label}</button>`).join('')}</div>
     </section>
+    <section class="card"><h2>화면 보호</h2>
+      <div class="seg saver-seg">${SAVER_CHOICES.map(m => `<button class="seg-btn ${settings.screensaverMin === m ? 'active' : ''}" data-action="saver-min" data-min="${m}">${m ? m + '분' : '끔'}</button>`).join('')}</div>
+      <button class="btn outline" data-action="saver-preview">지금 켜 보기</button>
+      <p class="help">${settings.screensaverMin
+        ? `${settings.screensaverMin}분 동안 화면을 만지지 않으면 검은 화면으로 바뀝니다.`
+        : '화면 보호가 꺼져 있어 밝은 화면이 계속 켜져 있습니다.'} 검은 화면은 전기를 아끼고 화면 잔상(번인)을 막아 줍니다. 아무 데나 누르면 원래 화면으로 돌아옵니다.</p>
+    </section>
     ${cloudCard()}
     <section class="card"><h2>관리자 비밀번호</h2>
       <p class="muted">${hasPin() ? '설정되어 있습니다.' : '아직 정하지 않았습니다.'} '매출 기록 전체 삭제'와 '백업 파일 복원' 때 필요합니다.</p>
@@ -864,6 +875,8 @@ const actions = {
     [list[i], list[j]] = [list[j], list[i]]; saveSettings(); render();
   },
   theme(el) { applyTheme(el.dataset.theme, true); vibrate(); render(); },
+  'saver-min'(el) { settings.screensaverMin = Number(el.dataset.min); saveSettings(); Saver.reset(); vibrate(); render(); },
+  'saver-preview'() { return Saver.show(); },
   'export-json'() { return exportJSON(); },
   'export-csv'() { return exportCSV(); },
   async wipe() {
@@ -957,6 +970,62 @@ document.addEventListener('change', e => {
   saveSettings();
 });
 
+/* ---------- 화면 보호 ----------
+ * 정한 시간 동안 손대지 않으면 검은 화면에 시계와 오늘 매출만 어둡게 띄웁니다.
+ * OLED는 검은 부분의 픽셀이 꺼지므로 전기를 아끼고 번인을 막습니다. 글자는 30초마다 자리를 옮깁니다.
+ * 보호 화면을 누른 터치는 아래 버튼에 전달되지 않습니다(실수로 테이블이 열리지 않도록). */
+const Saver = (() => {
+  let idleTimer = null, tickTimer = null, el = null;
+  function reset() {
+    clearTimeout(idleTimer);
+    if (el) return;                          // 떠 있는 동안에는 누를 때만 닫힘
+    const m = settings.screensaverMin;
+    if (m > 0) idleTimer = setTimeout(show, m * 60000);
+  }
+  async function update() {
+    if (!el) return;
+    const d = new Date();
+    el.querySelector('.saver-time').textContent = `${pad2(d.getHours())}:${pad2(d.getMinutes())}`;
+    let line = '';
+    try {
+      const s = startOfDay(d);
+      const recs = await DB.range(s.getTime(), addDays(s, 1).getTime());
+      line = `오늘 매출 ${won(sum(recs, r => r.total))} · ${recs.length}건`;
+    } catch (e) { /* 표시만 생략 */ }
+    const busy = Object.keys(open).filter(k => hasItems(open[k])).length;
+    if (busy) line += `\n주문 중인 테이블 ${busy}곳`;
+    if (!el) return;
+    el.querySelector('.saver-sales').textContent = line;
+    const box = el.querySelector('.saver-box');
+    const maxX = Math.max(0, el.clientWidth - box.offsetWidth);
+    const maxY = Math.max(0, el.clientHeight - box.offsetHeight);
+    box.style.transform = `translate(${Math.round(Math.random() * maxX)}px, ${Math.round(Math.random() * maxY)}px)`;
+  }
+  async function show() {
+    clearTimeout(idleTimer);
+    if (el || document.visibilityState !== 'visible') return;
+    el = document.createElement('div');
+    el.className = 'saver';
+    el.innerHTML = '<div class="saver-box"><div class="saver-time"></div><div class="saver-sales"></div><div class="saver-hint">화면을 누르면 돌아갑니다</div></div>';
+    el.addEventListener('click', e => { e.preventDefault(); e.stopPropagation(); hide(); });
+    document.body.appendChild(el);
+    const meta = document.querySelector('meta[name="theme-color"]');
+    if (meta) meta.content = '#000000';
+    await update();
+    tickTimer = setInterval(update, 30000);
+  }
+  function hide() {
+    if (!el) return;
+    el.remove(); el = null;
+    clearInterval(tickTimer);
+    applyTheme(document.documentElement.dataset.theme, false);
+    reset();
+  }
+  ['pointerdown', 'keydown', 'input', 'wheel'].forEach(ev => document.addEventListener(ev, reset, { capture: true, passive: true }));
+  document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') reset(); });
+  return { reset, show, hide, isOn: () => !!el };
+})();
+
 /* ---------- 시작 ---------- */
 window.addEventListener('beforeinstallprompt', e => {
   e.preventDefault(); state.installPrompt = e;
@@ -981,6 +1050,7 @@ document.addEventListener('visibilitychange', keepAwake);
   }
   render();
   keepAwake();
+  Saver.reset();
   if ('serviceWorker' in navigator && (location.protocol === 'https:' || ['localhost', '127.0.0.1'].includes(location.hostname))) {
     navigator.serviceWorker.register('./sw.js').catch(() => { /* 오프라인 캐시 없이 동작 */ });
   }
