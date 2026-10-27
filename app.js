@@ -5,7 +5,7 @@
  */
 'use strict';
 
-const APP_VERSION = '1.3.4';
+const APP_VERSION = '1.4.0';
 const UNDO_MS = 8000;                     // 결제 직후 되돌릴 수 있는 시간
 const LS_PIN = 'gujip.pin';
 const SAVER_CHOICES = [0, 1, 3, 5, 10];   // 화면 보호 대기 시간(분). 0 = 끔
