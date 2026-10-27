@@ -21,7 +21,7 @@ function DEFAULT_SETTINGS() {
   return {
     storeName: '그집추어탕',
     cashDiscount: 10,
-    layoutVersion: 2,
+    layoutVersion: 3,
     menuVersion: 2,
     /* noDiscount: 현금 할인에서 제외되는 메뉴(주류·음료) */
     menu: [
@@ -32,18 +32,19 @@ function DEFAULT_SETTINGS() {
       { id: 'm_beer', name: '맥주', price: 4000, noDiscount: true },
       { id: 'm_drink', name: '음료', price: 2000, noDiscount: true },
     ],
-    /* x, y: 도면 영역 안의 위치(%). 주방이 오른쪽 위, 입구가 왼쪽 아래인 도면 기준 */
+    /* x, y: 도면 영역 안의 위치(%). 주방이 오른쪽 위, 입구가 왼쪽 아래인 도면 기준
+     * 열: 왼쪽 11.5 / 가운데 37.5 / 오른쪽 63.5, 행: 3 / 22 / 45 / 69 */
     tables: [
       { id: 'a1', name: '1번', seats: 2, x: 11.5, y: 3 },
-      { id: 'a2', name: '2번', seats: 4, x: 63.5, y: 3 },
+      { id: 'a2', name: '2번', seats: 4, x: 37.5, y: 3 },
       { id: 'a3', name: '3번', seats: 2, x: 11.5, y: 22 },
-      { id: 'a4', name: '4번', seats: 4, x: 63.5, y: 22 },
-      { id: 'a5', name: '5번', seats: 4, x: 11.5, y: 43 },
-      { id: 'a6', name: '6번', seats: 4, x: 37.5, y: 49 },
+      { id: 'a4', name: '4번', seats: 4, x: 37.5, y: 22 },
+      { id: 'a5', name: '5번', seats: 4, x: 11.5, y: 45 },
+      { id: 'a6', name: '6번', seats: 4, x: 37.5, y: 45 },
       { id: 'a7', name: '7번', seats: 4, x: 63.5, y: 45 },
       { id: 'a8', name: '8번', seats: 4, x: 11.5, y: 69 },
-      { id: 'a9', name: '9번', seats: 4, x: 37.5, y: 76 },
-      { id: 'a10', name: '10번', seats: 4, x: 63.5, y: 72 },
+      { id: 'a9', name: '9번', seats: 4, x: 37.5, y: 69 },
+      { id: 'a10', name: '10번', seats: 4, x: 63.5, y: 69 },
     ],
   };
 }
@@ -165,10 +166,42 @@ function cashTotalOf(items) {
 }
 const todayLabel = () => { const d = new Date(); return `${d.getMonth() + 1}월 ${d.getDate()}일 (${DAYS[d.getDay()]})`; };
 
+/* ---------- 화면 스타일(테마) ---------- */
+const THEMES = {
+  orange: { label: '오렌지', color: '#d9531e', swatch: 'linear-gradient(135deg,#d9531e 50%,#f5f2ec 50%)' },
+  white: { label: '화이트', color: '#ffffff', swatch: 'linear-gradient(135deg,#ffffff 50%,#ea580c 50%)' },
+  dark: { label: '다크', color: '#1f2126', swatch: 'linear-gradient(135deg,#1f2126 50%,#ff7a3d 50%)' },
+  green: { label: '그린', color: '#1f6b4a', swatch: 'linear-gradient(135deg,#1f6b4a 50%,#f3f1ea 50%)' },
+};
+const LS_THEME = 'gujip.theme';
+function applyTheme(name, persist) {
+  const t = THEMES[name] ? name : 'orange';
+  document.documentElement.dataset.theme = t;
+  const meta = document.querySelector('meta[name="theme-color"]');
+  if (meta) meta.content = THEMES[t].color;
+  if (persist) { try { localStorage.setItem(LS_THEME, t); } catch (e) { /* 무시 */ } }
+  return t;
+}
+(function initTheme() {
+  let saved = null;
+  try { saved = localStorage.getItem(LS_THEME); } catch (e) { /* 무시 */ }
+  const fromUrl = new URLSearchParams(location.search).get('theme');
+  applyTheme(fromUrl || saved || 'orange', !!fromUrl);
+})();
+
 /* ---------- 화면 ---------- */
+const SVG = (body, w = 2) => `<svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="${w}" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${body}</svg>`;
+const ICONS = {
+  tables: SVG('<rect x="3" y="3" width="7.5" height="7.5" rx="1.8"/><rect x="13.5" y="3" width="7.5" height="7.5" rx="1.8"/><rect x="3" y="13.5" width="7.5" height="7.5" rx="1.8"/><rect x="13.5" y="13.5" width="7.5" height="7.5" rx="1.8"/>'),
+  sales: SVG('<path d="M5 20v-8"/><path d="M12 20V5"/><path d="M19 20v-5"/><path d="M3 20h18" stroke-width="2"/>', 3),
+  settings: SVG('<path d="M4 7h8"/><path d="M19 7h1"/><circle cx="15.5" cy="7" r="2.3"/><path d="M4 12h1"/><path d="M12 12h8"/><circle cx="8.5" cy="12" r="2.3"/><path d="M4 17h8"/><path d="M19 17h1"/><circle cx="15.5" cy="17" r="2.3"/>'),
+  back: SVG('<path d="M15 18l-6-6 6-6"/>', 2.6),
+  chevron: SVG('<path d="M9 6l6 6-6 6"/>', 2.6),
+  bag: SVG('<path d="M6 8h12l1 13H5L6 8z"/><path d="M9 8V6a3 3 0 0 1 6 0v2"/>'),
+};
 function nav(active) {
-  const item = (v, icon, label) => `<button class="nav-btn ${active === v ? 'active' : ''}" data-action="nav" data-view="${v}"><span class="nav-icon">${icon}</span>${label}</button>`;
-  return `<nav class="bottom-nav">${item('tables', '🍲', '테이블')}${item('sales', '📊', '매출')}${item('settings', '⚙️', '설정')}</nav>`;
+  const item = (v, label) => `<button class="nav-btn ${active === v ? 'active' : ''}" data-action="nav" data-view="${v}">${ICONS[v]}<span>${label}</span></button>`;
+  return `<nav class="bottom-nav">${item('tables', '테이블')}${item('sales', '매출')}${item('settings', '설정')}</nav>`;
 }
 
 async function viewTables() {
@@ -186,7 +219,7 @@ async function viewTables() {
       : onFloor ? (t.seats ? `${t.seats}인석` : '비어 있음')
       : (t.seats ? `${t.seats}인석 · 비어 있음` : '비어 있음');
     return `<button class="table-card ${busy ? 'busy' : ''} ${extra}" data-action="open-table" data-id="${t.id}"${style ? ` style="${style}"` : ''}>
-      <span class="table-name">${esc(t.name)}</span>
+      <span class="table-name">${isTakeout ? ICONS.bag : ''}${esc(t.name)}</span>
       ${busy
         ? `<span class="table-amount">${won(orderTotal(o))}</span><span class="table-items">${esc(itemSummary(o, onFloor ? 2 : 3))}</span>`
         : `<span class="table-empty">${emptyLabel}</span>`}
@@ -200,7 +233,7 @@ async function viewTables() {
     </div>` : '';
   return `<header class="topbar"><h1>${esc(settings.storeName)}</h1><span class="topbar-sub">${todayLabel()}</span></header>
   <main class="content">
-    <button class="today-strip" data-action="nav" data-view="sales"><span>오늘 매출 <strong>${won(todayTotal)}</strong></span><span>${todayCount}건 ›</span></button>
+    <button class="today-strip" data-action="nav" data-view="sales"><span><span class="label">오늘 매출</span><strong>${won(todayTotal)}</strong></span><span class="count">${todayCount}건 ${ICONS.chevron}</span></button>
     <div class="table-grid">${card({ id: TAKEOUT_ID, name: '포장' }, 'takeout wide')}</div>
     ${floor}
     ${unplaced.length ? `<div class="table-grid ${unplaced.length > 8 ? 'cols-3' : ''}">${unplaced.map(t => card(t)).join('')}</div>` : ''}
@@ -215,7 +248,7 @@ function viewOrder() {
   const name = tableName(state.tableId);
   const title = state.tableId === TAKEOUT_ID ? '포장 주문' : `${name} 테이블`;
   return `<header class="topbar order-top">
-      <button class="back-btn" data-action="nav" data-view="tables">‹ 테이블</button>
+      <button class="back-btn" data-action="nav" data-view="tables">${ICONS.back}테이블</button>
       <h1>${esc(title)}</h1>
       <button class="text-btn danger" data-action="clear-table" ${filled ? '' : 'disabled'}>비우기</button>
     </header>
@@ -327,7 +360,7 @@ async function viewSales() {
       ${mode === 'day' ? `<input type="date" class="date-input" data-field="sales-date" value="${dateKey(s)}">` : ''}
     </div>
     <section class="card">
-      <div class="summary-total"><span>총 매출</span><strong>${won(total)}</strong></div>
+      <div class="summary-total"><span class="label">총 매출</span><strong>${won(total)}</strong></div>
       <div class="summary-row"><span>주문 ${recs.length}건</span><span>현금 ${won(sum(cash, r => r.total))} (${cash.length}건)</span><span>카드 ${won(sum(card, r => r.total))} (${card.length}건)</span></div>
       ${discount ? `<div class="summary-row muted"><span>현금 할인 합계 ${won(discount)}</span></div>` : ''}
     </section>
@@ -371,6 +404,9 @@ function viewSettings() {
       ${editList('table', settings.tables)}
       <button class="btn outline" data-action="add" data-kind="table">+ 테이블 추가</button>
       <p class="help">테이블 위치는 가게 도면에 맞춰 고정되어 있습니다(주방 오른쪽 위, 입구 왼쪽 아래). 새로 추가한 테이블은 도면 아래에 따로 표시됩니다. 배치를 바꾸려면 Claude에게 요청하세요.</p>
+    </section>
+    <section class="card"><h2>화면 스타일</h2>
+      <div class="theme-row">${Object.entries(THEMES).map(([k, t]) => `<button class="theme-btn ${document.documentElement.dataset.theme === k ? 'active' : ''}" data-action="theme" data-theme="${k}"><span class="theme-swatch" style="background:${t.swatch}"></span>${t.label}</button>`).join('')}</div>
     </section>
     <section class="card"><h2>데이터</h2>
       <button class="btn outline" data-action="export-json">백업 파일 내보내기</button>
@@ -563,6 +599,7 @@ const actions = {
     if (i < 0 || j < 0 || j >= list.length) return;
     [list[i], list[j]] = [list[j], list[i]]; saveSettings(); render();
   },
+  theme(el) { applyTheme(el.dataset.theme, true); vibrate(); render(); },
   'export-json'() { return exportJSON(); },
   'export-csv'() { return exportCSV(); },
   async wipe() {
