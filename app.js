@@ -5,7 +5,8 @@
  */
 'use strict';
 
-const APP_VERSION = '1.2.0';
+const APP_VERSION = '1.3.0';
+const UNDO_MS = 8000;                     // 결제 직후 되돌릴 수 있는 시간
 const LS_PIN = 'gujip.pin';
 const SAVER_CHOICES = [0, 1, 3, 5, 10];   // 화면 보호 대기 시간(분). 0 = 끔
 const LS_SETTINGS = 'gujip.settings';
@@ -177,7 +178,16 @@ const DB = (() => {
     },
     range: (a, b) => tx('sales', 'readonly', s => reqP(s.sales.index('ts').getAll(IDBKeyRange.bound(a, b, false, true)))),
     all: () => tx('sales', 'readonly', s => reqP(s.sales.getAll())),
+    get: id => tx('sales', 'readonly', s => reqP(s.sales.get(id))),
     getByUid: u => tx('sales', 'readonly', s => reqP(s.sales.index('uid').get(u))),
+    /* 기록 수정(결제수단 변경 등): 같은 id에 덮어쓰고 클라우드에 다시 올림 */
+    async update(rec) {
+      await tx(W, 'readwrite', async s => {
+        s.sales.put(rec);
+        if (tracking && rec.uid) s.outbox.put(entry(rec.uid, 'put'));
+      });
+      changed();
+    },
     async remove(id) {
       await tx(W, 'readwrite', async s => {
         const rec = await reqP(s.sales.get(id));
@@ -273,6 +283,8 @@ const state = {
   installPrompt: null,
   persisted: null,
   cloud: null,             // 클라우드 상태(cloud.js가 알려 줌)
+  lastPay: null,           // 방금 결제한 내용(되돌리기용)
+  moveOpen: false,         // 테이블 옮기기·합치기 창
 };
 
 const orderTotal = o => sum(o.items, i => i.price * i.qty);
@@ -282,6 +294,9 @@ const itemSummary = (o, max = 3) => {
   return p.slice(0, max).join(', ') + (p.length > max ? ` 외 ${p.length - max}` : '');
 };
 const tableName = id => id === TAKEOUT_ID ? '포장' : ((settings.tables.find(t => t.id === id) || {}).name || '테이블');
+const tableLabel = id => id === TAKEOUT_ID ? '포장' : `${tableName(id)} 테이블`;
+/* '로/으로' 조사: 받침이 없거나 ㄹ받침이면 '로', 아니면 '으로' */
+const toward = s => { const c = s.charCodeAt(s.length - 1); if (c < 0xAC00 || c > 0xD7A3) return s + '로'; const f = (c - 0xAC00) % 28; return s + (f === 0 || f === 8 ? '로' : '으로'); };
 /* 현금 결제 때의 단가: 주문에 담을 때 기록된 현금가 → 현재 메뉴 설정의 현금가 → 정가 순서 */
 const cashUnitOf = i => {
   if (i.cashPrice != null) return i.cashPrice;
@@ -396,12 +411,30 @@ function viewOrder() {
             <span class="order-amt">${won(i.price * i.qty)}</span></div>`).join('')
           : '<p class="hint">위의 메뉴를 누르면 주문에 담깁니다.</p>'}
       </section>
+      ${filled ? '<button class="btn outline move-open" data-action="open-move">다른 테이블로 옮기기 · 합치기</button>' : ''}
     </main>
     <footer class="order-footer">
       <div class="total-line"><span>합계</span><strong>${won(total)}</strong></div>
       <button class="btn pay-btn" data-action="open-pay" ${filled ? '' : 'disabled'}>결제하기</button>
     </footer>
-    ${state.payOpen ? payModal(o) : ''}`;
+    ${state.payOpen ? payModal(o) : ''}
+    ${state.moveOpen ? moveModal() : ''}`;
+}
+
+/* 테이블 옮기기·합치기 창: 빈 테이블은 옮기기, 주문이 있는 테이블은 합치기 */
+function moveModal() {
+  const src = state.tableId;
+  const targets = [{ id: TAKEOUT_ID, name: '포장' }].concat(settings.tables).filter(t => t.id !== src);
+  return `<div class="overlay" data-action="close-move"><div class="modal" data-action="noop">
+    <h2>어느 테이블로 옮길까요?</h2>
+    <p class="modal-msg small">주문이 있는 테이블을 고르면 주문이 합쳐집니다.</p>
+    <div class="move-grid">${targets.map(t => {
+      const o = open[t.id]; const busy = hasItems(o);
+      return `<button class="move-btn ${busy ? 'busy' : ''} ${t.id === TAKEOUT_ID ? 'wide' : ''}" data-action="move-to" data-id="${t.id}">
+        <span class="move-name">${esc(t.name)}</span><span class="move-sub">${busy ? won(orderTotal(o)) + ' · 합치기' : '비어 있음'}</span></button>`;
+    }).join('')}</div>
+    <button class="btn ghost" data-action="close-move">돌아가기</button>
+  </div></div>`;
 }
 
 function payModal(o) {
@@ -498,8 +531,13 @@ async function viewSales() {
     ${mode === 'day' ? `<section class="card"><h2>주문 내역</h2>
       ${recs.length ? recs.slice().reverse().map(r => `<div class="sale-row">
         <div class="sale-main"><span class="sale-time">${timeLabel(r.ts)}</span><span class="sale-table">${esc(r.tableName)}</span><span class="badge ${r.method}">${r.method === 'cash' ? '현금' : '카드'}</span><span class="sale-amt">${won(r.total)}</span></div>
-        <div class="sale-sub"><span>${esc(r.items.map(i => `${i.name} ${i.qty}`).join(', '))}</span><button class="text-btn danger" data-action="void-sale" data-id="${r.id}">취소</button></div>
+        <div class="sale-sub"><span>${esc(r.items.map(i => `${i.name} ${i.qty}`).join(', '))}</span></div>
+        <div class="sale-actions">
+          <button class="text-btn" data-action="switch-method" data-id="${r.id}">${r.method === 'cash' ? '카드로 변경' : '현금으로 변경'}</button>
+          <button class="text-btn danger" data-action="void-sale" data-id="${r.id}">취소</button>
+        </div>
       </div>`).join('') : '<p class="hint">주문 내역이 없습니다.</p>'}
+      <p class="help">결제수단을 잘못 눌렀으면 '변경'으로 바꾸면 됩니다. 현금가 차이는 자동으로 다시 계산됩니다.</p>
     </section>` : ''}
   </main>${nav('sales')}`;
 }
@@ -645,6 +683,7 @@ async function render() {
   }
   if (seq !== renderSeq) return;
   const y = window.scrollY;
+  document.body.classList.toggle('in-order', state.view === 'order');   // 주문 화면에서는 알림을 결제 버튼 위로 올림
   $('#app').innerHTML = html;
   window.scrollTo(0, lastView === state.view ? y : 0);
   lastView = state.view;
@@ -730,11 +769,20 @@ async function resetPinViaCloud() {
 }
 
 let toastTimer = null;
-function toast(msg, kind = '') {
+/* 알림 띄우기. action = { label, action, ms } 를 주면 버튼이 달린 알림이 됩니다(예: 되돌리기). */
+function toast(msg, kind = '', action = null) {
   const t = $('#toast');
-  t.textContent = msg; t.className = 'toast ' + kind; t.hidden = false;
   clearTimeout(toastTimer);
-  toastTimer = setTimeout(() => { t.hidden = true; }, 2500);
+  t.className = 'toast ' + kind + (action ? ' has-action' : '');
+  if (action) t.innerHTML = `<span class="toast-msg">${esc(msg)}</span><button class="toast-btn" data-action="${action.action}">${esc(action.label)}</button>`;
+  else t.textContent = msg;
+  t.hidden = false;
+  toastTimer = setTimeout(hideToast, action ? (action.ms || UNDO_MS) : 2500);
+}
+function hideToast() {
+  const t = $('#toast');
+  t.hidden = true; t.innerHTML = '';
+  clearTimeout(toastTimer);
 }
 
 /* ---------- 주문 / 결제 ---------- */
@@ -764,23 +812,105 @@ async function pay(method) {
     const subtotal = orderTotal(o);
     const total = method === 'cash' ? cashTotalOf(items) : subtotal;
     const now = new Date();
-    await DB.add({
+    const tableId = state.tableId;
+    const id = await DB.add({
       uid: newRecordId(),
       ts: now.getTime(), dateKey: dateKey(now),
-      tableId: state.tableId, tableName: tableName(state.tableId),
+      tableId, tableName: tableName(tableId),
       items: items.map(i => ({ name: i.name, price: i.price, qty: i.qty, unit: method === 'cash' ? cashUnitOf(i) : i.price })),
       subtotal, discount: subtotal - total, total, method,
     });
-    delete open[state.tableId]; saveOpen();
+    delete open[tableId]; saveOpen();
     state.payOpen = false; state.view = 'tables'; state.tableId = null;
+    // 잠깐 동안 되돌릴 수 있도록 방금 결제한 내용을 기억해 둡니다.
+    state.lastPay = { id, tableId, items: items.map(i => Object.assign({}, i)), at: Date.now() };
     vibrate(40);
     await render();
-    toast(`결제 완료 · ${method === 'cash' ? '현금' : '카드'} ${won(total)}`, 'ok');
+    toast(`결제 완료 · ${method === 'cash' ? '현금' : '카드'} ${won(total)}`, 'ok', { label: '되돌리기', action: 'undo-pay', ms: UNDO_MS });
   } catch (e) {
     alert('결제 저장에 실패했습니다.\n' + (e.message || e));
   } finally {
     state.paying = false;
   }
+}
+
+/* 방금 한 결제를 취소하고 주문을 테이블로 되돌립니다. */
+async function undoPay() {
+  const u = state.lastPay;
+  hideToast();
+  if (!u || Date.now() - u.at > UNDO_MS + 2000) { state.lastPay = null; return; }
+  state.lastPay = null;
+  try {
+    await DB.remove(u.id);
+  } catch (e) {
+    alert('결제를 되돌리지 못했습니다.\n' + (e.message || e));
+    return;
+  }
+  const cur = open[u.tableId];
+  if (hasItems(cur)) {
+    // 그 사이에 같은 테이블에 새 주문이 담겼으면 수량을 합칩니다.
+    for (const it of u.items) {
+      const ex = cur.items.find(i => i.menuId === it.menuId && i.price === it.price);
+      if (ex) ex.qty += it.qty; else cur.items.push(Object.assign({}, it));
+    }
+    cur.updatedAt = Date.now();
+  } else {
+    open[u.tableId] = { items: u.items.map(i => Object.assign({}, i)), startedAt: Date.now() };
+  }
+  saveOpen();
+  state.view = 'order'; state.tableId = u.tableId; state.payOpen = false;
+  vibrate(30);
+  await render();
+  toast('결제를 되돌렸습니다. 주문이 다시 담겼습니다');
+}
+
+/* 지금 테이블의 주문을 다른 테이블로 옮기거나(빈 테이블) 합칩니다(주문이 있는 테이블). */
+async function moveOrder(targetId) {
+  const src = state.tableId, o = open[src];
+  if (!hasItems(o) || targetId === src) return;
+  const tgt = open[targetId];
+  const merging = hasItems(tgt);
+  const label = tableLabel(targetId);
+  if (merging) {
+    if (!await ask(`${label} 주문과 합칠까요?\n합친 뒤에는 ${toward(label)} 한 번에 계산합니다.`, '합치기', false)) return;
+    for (const it of o.items) {
+      const ex = tgt.items.find(i => i.menuId === it.menuId && i.price === it.price);
+      if (ex) ex.qty += it.qty; else tgt.items.push(Object.assign({}, it));
+    }
+    tgt.updatedAt = Date.now();
+  } else {
+    open[targetId] = Object.assign({}, o, { updatedAt: Date.now() });
+  }
+  delete open[src]; saveOpen();
+  state.moveOpen = false; state.tableId = targetId; state.payOpen = false;
+  vibrate(30);
+  await render();
+  toast(`${toward(label)} ${merging ? '합쳤습니다' : '옮겼습니다'}`, 'ok');
+}
+
+/* 지난 결제의 결제수단을 바꿉니다(현금 ↔ 카드). 현금가 차이를 다시 계산합니다. */
+function recomputeFor(rec, method) {
+  const items = rec.items.map(i => {
+    const m = settings.menu.find(x => x.name === i.name);
+    const cashUnit = m && m.cashPrice != null && m.price === i.price ? m.cashPrice : i.price;
+    return Object.assign({}, i, { unit: method === 'cash' ? cashUnit : i.price });
+  });
+  const subtotal = rec.subtotal != null ? rec.subtotal : sum(items, i => i.price * i.qty);
+  const total = sum(items, i => i.unit * i.qty);
+  return Object.assign({}, rec, { items, method, subtotal, total, discount: subtotal - total });
+}
+async function switchMethod(id) {
+  const rec = await DB.get(id);
+  if (!rec) { toast('기록을 찾지 못했습니다'); return; }
+  const method = rec.method === 'cash' ? 'card' : 'cash';
+  const next = recomputeFor(rec, method);
+  const label = method === 'cash' ? '현금' : '카드';
+  const amount = next.total === rec.total ? `결제 금액 ${won(rec.total)} (변동 없음)` : `결제 금액 ${won(rec.total)} → ${won(next.total)}`;
+  if (!await ask(`${timeLabel(rec.ts)} ${rec.tableName} 결제를 ${label}(으)로 바꿀까요?\n${amount}`, `${label}(으)로 변경`, false)) return;
+  await DB.update(next);
+  vibrate();
+  await render();
+  toast(`${label} 결제로 바꿨습니다 · ${won(next.total)}`, 'ok');
 }
 
 /* ---------- 백업 / 복원 ---------- */
@@ -832,8 +962,8 @@ async function restoreFromFile(file) {
 /* ---------- 동작 (버튼) ---------- */
 const actions = {
   noop() {},
-  nav(el) { state.view = el.dataset.view; state.payOpen = false; vibrate(); render(); },
-  'open-table'(el) { state.tableId = el.dataset.id; state.view = 'order'; state.payOpen = false; vibrate(); render(); },
+  nav(el) { state.view = el.dataset.view; state.payOpen = false; state.moveOpen = false; vibrate(); render(); },
+  'open-table'(el) { state.tableId = el.dataset.id; state.view = 'order'; state.payOpen = false; state.moveOpen = false; vibrate(); render(); },
   'add-item'(el) { changeQty(el.dataset.id, 1); },
   'inc-item'(el) { changeQty(el.dataset.id, 1); },
   'dec-item'(el) { changeQty(el.dataset.id, -1); },
@@ -851,6 +981,11 @@ const actions = {
     if (!await ask('이 결제를 취소(삭제)할까요?\n매출에서 빠집니다.', '결제 취소')) return;
     await DB.remove(Number(el.dataset.id)); toast('결제를 취소했습니다'); render();
   },
+  'undo-pay'() { return undoPay(); },
+  'switch-method'(el) { return switchMethod(Number(el.dataset.id)); },
+  'open-move'() { if (!hasItems(open[state.tableId])) return; state.moveOpen = true; vibrate(); render(); },
+  'close-move'() { state.moveOpen = false; render(); },
+  'move-to'(el) { return moveOrder(el.dataset.id); },
   async add(el) {
     const isMenu = el.dataset.kind === 'menu';
     const item = isMenu ? { id: uid(), name: '새 메뉴', price: 0 } : { id: uid(), name: `${settings.tables.length + 1}번`, seats: 4 };
