@@ -5,7 +5,7 @@
  */
 'use strict';
 
-const APP_VERSION = '1.3.0';
+const APP_VERSION = '1.3.1';
 const UNDO_MS = 8000;                     // 결제 직후 되돌릴 수 있는 시간
 const LS_PIN = 'gujip.pin';
 const SAVER_CHOICES = [0, 1, 3, 5, 10];   // 화면 보호 대기 시간(분). 0 = 끔
@@ -284,6 +284,7 @@ const state = {
   persisted: null,
   cloud: null,             // 클라우드 상태(cloud.js가 알려 줌)
   lastPay: null,           // 방금 결제한 내용(되돌리기용)
+  updateReady: false,      // 새 버전이 받아져 있어 한가할 때 새로고침하면 됨
 };
 
 const orderTotal = o => sum(o.items, i => i.price * i.qty);
@@ -665,6 +666,38 @@ async function render() {
   $('#app').innerHTML = html;
   window.scrollTo(0, lastView === state.view ? y : 0);
   lastView = state.view;
+  applyUpdateIfIdle();
+}
+
+/* ---------- 새 버전 자동 적용 ----------
+ * 서비스 워커가 새 버전을 설치하면 알려 줍니다. 테이블 화면에서 아무것도 하지 않는 중이면 바로 새로고침하고,
+ * 주문·결제 중이면 기다렸다가 테이블 화면으로 돌아오거나 화면 보호가 켜질 때 새로고침합니다.
+ * 주문 내용은 폰에 저장되어 있어 새로고침해도 사라지지 않습니다. */
+const appIdle = () => state.view === 'tables' && !state.payOpen && !state.paying && !$('#modal-root').firstChild;
+function onUpdateReady() {
+  if (state.updateReady) return;
+  state.updateReady = true;
+  if (appIdle()) { location.reload(); return; }
+  toast('새 버전이 준비됐습니다. 잠시 후 적용됩니다');
+}
+function applyUpdateIfIdle() {
+  if (state.updateReady && appIdle()) location.reload();
+}
+let updateCheckedAt = 0;
+async function checkForUpdate() {
+  if (Date.now() - updateCheckedAt < 5 * 60000 || navigator.onLine === false) return;
+  updateCheckedAt = Date.now();
+  try { const reg = await navigator.serviceWorker.getRegistration(); if (reg) await reg.update(); } catch (e) { /* 다음에 다시 */ }
+}
+const hadController = !!('serviceWorker' in navigator && navigator.serviceWorker.controller);   // 처음 설치가 아니라 업데이트인지
+function onSwMessage(e) {
+  if (!e.data || e.data.type !== 'sw-activated') return;
+  try { if (e.source && e.source.postMessage) e.source.postMessage({ type: 'ack' }); } catch (err) { /* 무시 */ }
+  if (hadController) onUpdateReady();   // 처음 설치 때는 이미 최신 파일이라 새로고침할 필요 없음
+}
+if ('serviceWorker' in navigator) {
+  navigator.serviceWorker.addEventListener('message', onSwMessage);
+  document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') checkForUpdate(); });
 }
 
 /* ---------- 모달 / 토스트 ---------- */
@@ -1102,6 +1135,7 @@ const Saver = (() => {
   async function show() {
     clearTimeout(idleTimer);
     if (el || document.visibilityState !== 'visible') return;
+    if (state.updateReady) { location.reload(); return; }   // 한가한 틈에 새 버전 적용
     el = document.createElement('div');
     el.className = 'saver';
     el.innerHTML = '<div class="saver-box"><div class="saver-time"></div><div class="saver-sales"></div><div class="saver-hint">화면을 누르면 돌아갑니다</div></div>';
@@ -1150,7 +1184,7 @@ document.addEventListener('visibilitychange', keepAwake);
   keepAwake();
   Saver.reset();
   if ('serviceWorker' in navigator && (location.protocol === 'https:' || ['localhost', '127.0.0.1'].includes(location.hostname))) {
-    navigator.serviceWorker.register('./sw.js').catch(() => { /* 오프라인 캐시 없이 동작 */ });
+    navigator.serviceWorker.register('./sw.js', { updateViaCache: 'none' }).then(() => { updateCheckedAt = Date.now(); }).catch(() => { /* 오프라인 캐시 없이 동작 */ });
   }
   try {
     if (navigator.storage && navigator.storage.persist) {
