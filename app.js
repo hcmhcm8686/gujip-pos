@@ -168,14 +168,15 @@ const todayLabel = () => { const d = new Date(); return `${d.getMonth() + 1}월 
 
 /* ---------- 화면 스타일(테마) ---------- */
 const THEMES = {
+  green: { label: '그린', color: '#1f6b4a', swatch: 'linear-gradient(135deg,#1f6b4a 50%,#f3f1ea 50%)' },
   orange: { label: '오렌지', color: '#d9531e', swatch: 'linear-gradient(135deg,#d9531e 50%,#f5f2ec 50%)' },
   white: { label: '화이트', color: '#ffffff', swatch: 'linear-gradient(135deg,#ffffff 50%,#ea580c 50%)' },
   dark: { label: '다크', color: '#1f2126', swatch: 'linear-gradient(135deg,#1f2126 50%,#ff7a3d 50%)' },
-  green: { label: '그린', color: '#1f6b4a', swatch: 'linear-gradient(135deg,#1f6b4a 50%,#f3f1ea 50%)' },
 };
-const LS_THEME = 'gujip.theme';
+const DEFAULT_THEME = 'green';           // 2026-10-27 시안 D(딥 그린)로 확정
+const LS_THEME = 'gujip.theme.v2';       // 시안 고르기 전에 저장된 값은 무시
 function applyTheme(name, persist) {
-  const t = THEMES[name] ? name : 'orange';
+  const t = THEMES[name] ? name : DEFAULT_THEME;
   document.documentElement.dataset.theme = t;
   const meta = document.querySelector('meta[name="theme-color"]');
   if (meta) meta.content = THEMES[t].color;
@@ -186,7 +187,7 @@ function applyTheme(name, persist) {
   let saved = null;
   try { saved = localStorage.getItem(LS_THEME); } catch (e) { /* 무시 */ }
   const fromUrl = new URLSearchParams(location.search).get('theme');
-  applyTheme(fromUrl || saved || 'orange', !!fromUrl);
+  applyTheme(fromUrl || saved || DEFAULT_THEME, !!fromUrl);
 })();
 
 /* ---------- 화면 ---------- */

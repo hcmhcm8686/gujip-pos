@@ -1,5 +1,11 @@
-/* ===== 테마 (설정 > 화면 스타일, 또는 ?theme= 로 선택) ===== */
-:root, html[data-theme="orange"]{
+/* ===== 테마 (설정 > 화면 스타일, 또는 ?theme= 로 선택) · 기본: 그린 ===== */
+:root, html[data-theme="green"]{
+  --bg:#f3f1ea;--card:#fff;--line:#e3e0d6;--line-strong:#cfcabd;--text:#1f241f;--muted:#6f756c;
+  --primary:#1f6b4a;--primary-soft:#e6f2ec;--busy:#d97b1f;--green:#1f6b4a;--blue:#2663d9;--red:#c93c3c;--teal:#8a5a2b;--teal-soft:#f3ebe0;
+  --topbar-bg:#1f6b4a;--topbar-fg:#fff;--topbar-line:transparent;--pill:rgba(255,255,255,.16);--floor-bg:#faf9f4;--soft:#ebe8df;
+  --radius:14px;--shadow:0 1px 2px rgba(30,40,30,.05),0 2px 10px rgba(30,40,30,.05);
+}
+html[data-theme="orange"]{
   --bg:#f5f2ec;--card:#fff;--line:#e7e2d9;--line-strong:#d6cfc4;--text:#221f1a;--muted:#7c756b;
   --primary:#d9531e;--primary-soft:#fdeee6;--busy:#ef8a3c;--green:#1d9a57;--blue:#2663d9;--red:#d13b3b;--teal:#13897a;--teal-soft:#e4f3f0;
   --topbar-bg:#d9531e;--topbar-fg:#fff;--topbar-line:transparent;--pill:rgba(255,255,255,.18);--floor-bg:#faf8f4;--soft:#efeae2;
@@ -18,13 +24,6 @@ html[data-theme="dark"]{
   --topbar-bg:#1f2126;--topbar-fg:#f2f3f5;--topbar-line:#2c2f36;--pill:rgba(255,255,255,.1);--floor-bg:#191b1f;--soft:#2a2d34;
   --shadow:0 1px 2px rgba(0,0,0,.4),0 2px 10px rgba(0,0,0,.35);
 }
-html[data-theme="green"]{
-  --bg:#f3f1ea;--card:#fff;--line:#e3e0d6;--line-strong:#cfcabd;--text:#1f241f;--muted:#6f756c;
-  --primary:#1f6b4a;--primary-soft:#e6f2ec;--busy:#d97b1f;--green:#1f6b4a;--blue:#2663d9;--red:#c93c3c;--teal:#8a5a2b;--teal-soft:#f3ebe0;
-  --topbar-bg:#1f6b4a;--topbar-fg:#fff;--topbar-line:transparent;--pill:rgba(255,255,255,.16);--floor-bg:#faf9f4;--soft:#ebe8df;
-  --shadow:0 1px 2px rgba(30,40,30,.05),0 2px 10px rgba(30,40,30,.05);
-}
-
 *{box-sizing:border-box}
 html{font-size:20px;-webkit-text-size-adjust:100%}
 body{margin:0;font-family:system-ui,-apple-system,"Malgun Gothic","Apple SD Gothic Neo","Noto Sans KR",sans-serif;background:var(--bg);color:var(--text);-webkit-tap-highlight-color:transparent;user-select:none;-webkit-user-select:none;overscroll-behavior:none;line-height:1.3}
