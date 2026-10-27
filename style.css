@@ -149,10 +149,12 @@ input{font:inherit;color:inherit;background:var(--card)}
 .toast{position:fixed;left:50%;bottom:110px;transform:translateX(-50%);z-index:30;background:#222;color:#fff;padding:14px 22px;border-radius:14px;font-weight:800;font-size:1.05rem;max-width:92vw;text-align:center;box-shadow:0 6px 20px rgba(0,0,0,.25)}
 .toast.ok{background:var(--green)}
 .in-order .toast{bottom:calc(176px + env(safe-area-inset-bottom))}
+.toast[hidden]{display:none}
 .toast.has-action{display:flex;align-items:center;gap:14px;padding:9px 9px 9px 20px;width:max-content;max-width:94vw}
 .toast-msg{flex:1;min-width:0;text-align:left}
-.toast-btn{flex:none;min-height:48px;padding:0 18px;border-radius:11px;background:#fff;color:#1d1d1d;font-weight:800;font-size:1.05rem}
+.toast-btn{flex:none;display:inline-flex;align-items:center;gap:8px;min-height:48px;padding:0 14px 0 18px;border-radius:11px;background:#fff;color:#1d1d1d;font-weight:800;font-size:1.05rem}
 .toast.ok .toast-btn{color:var(--green)}
+.toast-count{display:inline-flex;align-items:center;justify-content:center;min-width:30px;height:30px;padding:0 6px;border-radius:15px;background:var(--green);color:#fff;font-size:.9rem;font-variant-numeric:tabular-nums}
 
 /* 매출 화면 */
 .seg{display:flex;background:var(--soft);border-radius:var(--radius);padding:4px;gap:4px;margin-bottom:12px}
@@ -190,13 +192,6 @@ input{font:inherit;color:inherit;background:var(--card)}
 .sale-amt{font-weight:800}
 .sale-sub{display:flex;justify-content:space-between;align-items:center;margin-top:4px;color:var(--muted);font-size:.9rem;gap:8px}
 .sale-sub span{flex:1;line-height:1.4}
-.move-open{margin-top:12px}
-.move-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;max-height:52vh;overflow-y:auto;padding:2px}
-.move-btn{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;min-height:68px;border-radius:12px;background:var(--card);border:1px solid var(--line-strong)}
-.move-btn.busy{background:var(--primary-soft);border-color:var(--primary)}
-.move-btn.wide{grid-column:1/-1;flex-direction:row;gap:10px;min-height:56px}
-.move-name{font-weight:800;font-size:1.05rem}
-.move-sub{font-size:.75rem;color:var(--muted);font-weight:700}
 .sale-actions{display:flex;justify-content:flex-end;gap:4px;margin-top:2px}
 .sale-actions .text-btn{min-height:44px;color:var(--primary)}
 .sale-actions .text-btn.danger{color:var(--red)}
