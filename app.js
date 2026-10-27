@@ -22,7 +22,7 @@ const LANDMARKS = [
 function DEFAULT_SETTINGS() {
   return {
     storeName: '그집추어탕',
-    layoutVersion: 3,
+    layoutVersion: 4,
     menuVersion: 3,
     /* cashPrice: 현금 결제 때 적용되는 가격. 없으면 현금도 정가(주류·음료) */
     menu: [
@@ -38,7 +38,7 @@ function DEFAULT_SETTINGS() {
     tables: [
       { id: 'a1', name: '1번', seats: 2, x: 11.5, y: 3 },
       { id: 'a2', name: '2번', seats: 4, x: 37.5, y: 3 },
-      { id: 'a3', name: '3번', seats: 2, x: 11.5, y: 22 },
+      { id: 'a3', name: '3번', seats: 4, x: 11.5, y: 22 },
       { id: 'a4', name: '4번', seats: 4, x: 37.5, y: 22 },
       { id: 'a5', name: '5번', seats: 4, x: 11.5, y: 45 },
       { id: 'a6', name: '6번', seats: 4, x: 37.5, y: 45 },
@@ -87,9 +87,9 @@ function normalizeSettings(raw) {
       return out;
     });
   s.menuVersion = d.menuVersion;
-  // 예전 버전(도면 위치 없음)의 테이블 설정은 새 도면 기본값으로 바꿉니다.
-  const oldLayout = (Number(raw && raw.layoutVersion) || 1) < d.layoutVersion;
-  s.tables = (!oldLayout && Array.isArray(s.tables) && s.tables.length ? s.tables : d.tables)
+  // 도면 배치가 바뀌기 전(버전 3 미만)의 테이블 설정은 새 도면 기본값으로 바꿉니다.
+  const layoutVer = Number(raw && raw.layoutVersion) || 1;
+  s.tables = (layoutVer >= 3 && Array.isArray(s.tables) && s.tables.length ? s.tables : d.tables)
     .map(t => {
       const out = { id: String(t.id || uid()), name: String(t.name || '테이블') };
       const seats = Math.round(Number(t.seats) || 0);
@@ -97,6 +97,11 @@ function normalizeSettings(raw) {
       if (t.x != null && t.y != null && isFinite(Number(t.x)) && isFinite(Number(t.y))) { out.x = Number(t.x); out.y = Number(t.y); }
       return out;
     });
+  // 버전 4: 3번 테이블은 4인석(2026-10-27 확인). 다른 테이블 설정은 그대로 둡니다.
+  if (layoutVer < 4) {
+    const t3 = s.tables.find(t => t.id === 'a3');
+    if (t3 && t3.seats === 2) t3.seats = 4;
+  }
   s.layoutVersion = d.layoutVersion;
   return s;
 }
